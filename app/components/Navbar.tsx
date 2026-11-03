@@ -34,6 +34,16 @@ const converterLinks = [
     name: "Markdown to Word",
     href: "/?from=md&to=docx#converter",
     icon: Code2
+  },
+  {
+    name: "Markdown to PDF",
+    href: "/?from=md&to=pdf#converter",
+    icon: File
+  },
+  {
+    name: "Markdown to PowerPoint",
+    href: "/?from=md&to=pptx#converter",
+    icon: Presentation
   }
 ];
 

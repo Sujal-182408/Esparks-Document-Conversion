@@ -35,6 +35,22 @@ const converters = [
     to: "DOCX",
     description: "Create a formatted Word document from your Markdown files.",
   },
+  {
+    title: "Markdown to PDF",
+    href: "/?type=markdown-to-pdf",
+    icon: File,
+    from: "MD",
+    to: "PDF",
+    description: "Create a formatted PDF document from your Markdown files.",
+  },
+  {
+    title: "Markdown to PowerPoint",
+    href: "/?type=markdown-to-powerpoint",
+    icon: Presentation,
+    from: "MD",
+    to: "PPTX",
+    description: "Turn Markdown sections and content into presentation slides.",
+  },
 ];
 
 export default function ConverterSection() {

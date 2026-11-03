@@ -74,3 +74,30 @@ export async function downloadWordFile(
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 }
+
+export function downloadConvertedFile(
+  blob: Blob,
+  originalName: string,
+  extension: ".pdf" | ".pptx"
+): void {
+  const base = originalName
+    .replace(/\.[^.]+$/, "")
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_")
+    .trim()
+    .replace(/[. ]+$/, "");
+
+  const filename = `${base || "converted-document"}${extension}`;
+  const url = URL.createObjectURL(blob);
+
+  try {
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.style.display = "none";
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  } finally {
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+}

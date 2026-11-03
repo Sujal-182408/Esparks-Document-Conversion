@@ -1,8 +1,8 @@
-import { ConversionOption } from "../types/conversion";
-type Format = "docx" | "pdf" | "pptx" | "md";
-const conversionOptions: Record<Format, Format[]> = {
-  docx: ["pdf", "pptx", "md"],
-  pdf: ["docx", "pptx", "md"],
-  pptx: ["docx", "pdf", "md"],
+export type Format = "docx" | "pdf" | "pptx" | "md";
+
+export const conversionOptions: Record<Format, Format[]> = {
+  docx: ["md"],
+  pdf: ["md"],
+  pptx: ["md"],
   md: ["docx", "pdf", "pptx"],
 };

@@ -10,6 +10,7 @@ import {
 
 import {
   downloadTextFile,
+  downloadConvertedFile,
   downloadWordFile,
   markdownFilename,
   pdfMarkdownFilename,
@@ -20,8 +21,14 @@ import { wordToMarkdown } from "../converters/word-to-markdown";
 import { pdfToMarkdown } from "../converters/pdfToMarkdown";
 import { convertPowerPointToMarkdown } from "../converters/powerpointToMarkdown";
 import { convertMarkdownToWord } from "../converters/markdownToWord";
+import { convertMarkdownToPdf } from "../converters/mdToPdf";
+import { convertMarkdownToPowerPoint } from "../converters/markdownToPowerPoint";
+import { conversionOptions, type Format } from "../converters/conversionOptions";
 
-type Format = "docx" | "pdf" | "pptx" | "md";
+type DocumentConverterProps = {
+  initialInputFormat?: Format;
+  initialOutputFormat?: Format;
+};
 
 const validFormats: Format[] = ["docx", "pdf", "pptx", "md"];
 
@@ -39,14 +46,6 @@ const extensions: Record<Format, string> = {
   md: ".md"
 };
 
-// These are the conversions currently implemented.
-const conversionOptions: Record<Format, Format[]> = {
-  docx: ["md"],
-  pdf: ["md"],
-  pptx: ["md"],
-  md: ["docx"]
-};
-
 const detectFormat = (filename: string): Format | null => {
   const extension = filename.toLowerCase().split(".").pop();
   return validFormats.includes(extension as Format)
@@ -54,7 +53,10 @@ const detectFormat = (filename: string): Format | null => {
     : null;
 };
 
-export default function DocumentConverter() {
+export default function DocumentConverter({
+  initialInputFormat,
+  initialOutputFormat,
+}: DocumentConverterProps = {}) {
   const searchParams = useSearchParams();
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -69,8 +71,8 @@ export default function DocumentConverter() {
   const [previewOpen, setPreviewOpen] = useState(false);
 
   // Read the converter selected from the navbar.
-  const preferredInput = searchParams.get("from");
-  const preferredOutput = searchParams.get("to");
+  const preferredInput = searchParams.get("from") ?? initialInputFormat;
+  const preferredOutput = searchParams.get("to") ?? initialOutputFormat;
 
   useEffect(() => {
     const validInput = validFormats.includes(preferredInput as Format)
@@ -182,9 +184,18 @@ export default function DocumentConverter() {
       } else if (inputFormat === "md" && outputFormat === "docx") {
         const markdown = await file.text();
         const wordFile = await convertMarkdownToWord(markdown);
-        const filename = file.name.replace(/\.md$/i, ".docx");
-        await downloadWordFile(wordFile, filename);
+        await downloadWordFile(wordFile, file.name);
         setSuccess("Your Word document has been generated and downloaded.");
+      } else if (inputFormat === "md" && outputFormat === "pdf") {
+        const markdown = await file.text();
+        const pdfFile = await convertMarkdownToPdf(markdown);
+        downloadConvertedFile(pdfFile, file.name, ".pdf");
+        setSuccess("Your PDF document has been generated and downloaded.");
+      } else if (inputFormat === "md" && outputFormat === "pptx") {
+        const markdown = await file.text();
+        const powerpointFile = await convertMarkdownToPowerPoint(markdown);
+        downloadConvertedFile(powerpointFile, file.name, ".pptx");
+        setSuccess("Your PowerPoint presentation has been generated and downloaded.");
       } else {
         throw new Error("This conversion has not been implemented yet.");
       }

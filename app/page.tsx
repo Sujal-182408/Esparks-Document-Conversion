@@ -35,6 +35,18 @@ const converters = {
     description: "Convert Markdown files into downloadable Word documents.",
     inputFormat: "md",
     outputFormat: "docx"
+  },
+  "markdown-to-pdf": {
+    title: "Markdown to PDF Converter",
+    description: "Create a downloadable PDF document from Markdown files.",
+    inputFormat: "md",
+    outputFormat: "pdf"
+  },
+  "markdown-to-powerpoint": {
+    title: "Markdown to PowerPoint Converter",
+    description: "Turn Markdown content into a formatted PowerPoint presentation.",
+    inputFormat: "md",
+    outputFormat: "pptx"
   }
 } as const;
 
@@ -62,7 +74,10 @@ function HomeContent() {
             </p>
           </div>
         </section>
-       
+        <DocumentConverter
+          initialInputFormat={selected.inputFormat}
+          initialOutputFormat={selected.outputFormat}
+        />
         <Footer />
       </main>
     );
@@ -77,7 +92,8 @@ function HomeContent() {
       <div className="relative z-10">
         <Navbar />
         <Hero />
-      <DocumentConverter />
+        <DocumentConverter />
+        <ConverterSection />
         <HowItWorks />
         <About />
         <Footer />
