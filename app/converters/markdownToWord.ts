@@ -1,4 +1,5 @@
 
+// @ts-ignore -- `docx` declarations may be missing in some environments.
 import {
   Document,
   HeadingLevel,

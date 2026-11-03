@@ -26,7 +26,7 @@ export function markdownFilename(originalName: string): string {
     .trim()
     .replace(/[. ]+$/, "");
 
-  return `${base || "converted-document"}.md`;
+ return `${base || "converted-document"}.md`;
 }
 export function pdfMarkdownFilename(originalName: string): string {
   const base = originalName
@@ -46,7 +46,7 @@ export function powerpointMarkdownFilename(
     .trim()
     .replace(/[. ]+$/, "");
 
-  return `$DIL1.md`;
+  return `${base || "converted-document"}.md`;
 }
 
 export async function downloadWordFile(
