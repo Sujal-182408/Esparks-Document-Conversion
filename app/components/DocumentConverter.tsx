@@ -4,8 +4,16 @@
 import { useRef, useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import {
-  Upload, FileText, Download, RefreshCw, X,
-  CheckCircle2, AlertCircle, ChevronDown, Eye, Maximize2
+  Upload,
+  FileText,
+  Download,
+  RefreshCw,
+  X,
+  CheckCircle2,
+  AlertCircle,
+  ChevronDown,
+  Eye,
+  Maximize2
 } from "lucide-react";
 
 import {
@@ -48,6 +56,7 @@ const extensions: Record<Format, string> = {
 
 const detectFormat = (filename: string): Format | null => {
   const extension = filename.toLowerCase().split(".").pop();
+
   return validFormats.includes(extension as Format)
     ? extension as Format
     : null;
@@ -55,7 +64,7 @@ const detectFormat = (filename: string): Format | null => {
 
 export default function DocumentConverter({
   initialInputFormat,
-  initialOutputFormat,
+  initialOutputFormat
 }: DocumentConverterProps = {}) {
   const searchParams = useSearchParams();
   const fileRef = useRef<HTMLInputElement>(null);
@@ -70,7 +79,6 @@ export default function DocumentConverter({
   const [success, setSuccess] = useState("");
   const [previewOpen, setPreviewOpen] = useState(false);
 
-  // Read the converter selected from the navbar.
   const preferredInput = searchParams.get("from") ?? initialInputFormat;
   const preferredOutput = searchParams.get("to") ?? initialOutputFormat;
 
@@ -110,6 +118,10 @@ export default function DocumentConverter({
     ? conversionOptions[inputFormat]
     : [];
 
+  const closePreview = () => {
+    setPreviewOpen(false);
+  };
+
   const selectFile = (selectedFile?: File) => {
     setError("");
     setSuccess("");
@@ -135,7 +147,6 @@ export default function DocumentConverter({
       return;
     }
 
-    // Check whether the uploaded file matches the navbar selection.
     if (inputFormat && detectedFormat !== inputFormat) {
       setError(
         `Please upload a ${formatNames[inputFormat]} (${extensions[inputFormat]}) file.`
@@ -146,7 +157,6 @@ export default function DocumentConverter({
     setFile(selectedFile);
     setInputFormat(detectedFormat);
 
-    // Preserve navbar output selection when valid.
     setOutputFormat((currentOutput) =>
       currentOutput && conversionOptions[detectedFormat].includes(currentOutput)
         ? currentOutput
@@ -184,16 +194,19 @@ export default function DocumentConverter({
       } else if (inputFormat === "md" && outputFormat === "docx") {
         const markdown = await file.text();
         const wordFile = await convertMarkdownToWord(markdown);
+
         await downloadWordFile(wordFile, file.name);
         setSuccess("Your Word document has been generated and downloaded.");
       } else if (inputFormat === "md" && outputFormat === "pdf") {
         const markdown = await file.text();
         const pdfFile = await convertMarkdownToPdf(markdown);
+
         downloadConvertedFile(pdfFile, file.name, ".pdf");
         setSuccess("Your PDF document has been generated and downloaded.");
       } else if (inputFormat === "md" && outputFormat === "pptx") {
         const markdown = await file.text();
         const powerpointFile = await convertMarkdownToPowerPoint(markdown);
+
         downloadConvertedFile(powerpointFile, file.name, ".pptx");
         setSuccess("Your PowerPoint presentation has been generated and downloaded.");
       } else {
@@ -201,6 +214,7 @@ export default function DocumentConverter({
       }
     } catch (err) {
       console.error("Conversion error:", err);
+
       setError(
         err instanceof Error
           ? err.message
@@ -230,7 +244,6 @@ export default function DocumentConverter({
     setSuccess("");
     setPreviewOpen(false);
 
-    // Keep the navbar-selected formats after removing a file.
     if (inputFormat) {
       const validOutput =
         outputFormat && conversionOptions[inputFormat].includes(outputFormat);
@@ -250,7 +263,9 @@ export default function DocumentConverter({
     document.body.style.overflow = "hidden";
 
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setPreviewOpen(false);
+      if (event.key === "Escape") {
+        setPreviewOpen(false);
+      }
     };
 
     window.addEventListener("keydown", handleKeyDown);
@@ -268,9 +283,11 @@ export default function DocumentConverter({
           <span className="mb-4 inline-block rounded-full border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 text-xs font-semibold uppercase tracking-widest text-cyan-400">
             Dynamic Document Converter
           </span>
+
           <h2 className="text-3xl font-bold tracking-tight text-white sm:text-5xl">
             Convert Your <span className="text-gradient">Documents</span>
           </h2>
+
           <p className="mx-auto mt-4 max-w-xl text-sm leading-7 text-slate-400 sm:text-base">
             Upload any supported document. We detect its format automatically and show the available conversions.
           </p>
@@ -305,32 +322,41 @@ export default function DocumentConverter({
                 <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-cyan-400/10 text-cyan-400">
                   <Upload size={30} />
                 </div>
+
                 <p className="text-lg font-semibold text-white">
                   Drop your file here
                 </p>
+
                 <p className="mt-2 text-sm text-slate-400">
                   or click to browse your device
                 </p>
+
                 <span className="mt-5 rounded-lg border border-white/10 px-4 py-2 text-xs text-slate-300">
                   DOCX · PDF · PPTX · MD · Maximum 20 MB
                 </span>
               </button>
             ) : (
-              <div className="flex items-center gap-4 rounded-xl border border-cyan-400/20 bg-cyan-400/[0.05] p-5">
+              <div className="flex items-center gap-4 rounded-xl border border-cyan-400/20 bg-cyan-400/5 p-5">
                 <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-cyan-400/10 text-cyan-400">
                   <FileText size={25} />
                 </div>
+
                 <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium text-white">{file.name}</p>
+                  <p className="truncate font-medium text-white">
+                    {file.name}
+                  </p>
+
                   <p className="mt-1 text-xs text-slate-400">
                     Detected: {formatNames[inputFormat!]} ({extensions[inputFormat!]}) ·{" "}
                     {(file.size / 1024 / 1024).toFixed(2)} MB
                   </p>
                 </div>
+
                 <button
                   type="button"
                   onClick={reset}
                   aria-label="Remove file"
+                  title="Remove file"
                   className="rounded-lg p-2 text-slate-400 hover:bg-white/10 hover:text-white"
                 >
                   <X size={19} />
@@ -377,6 +403,7 @@ export default function DocumentConverter({
                   ))
                 )}
               </select>
+
               <ChevronDown
                 className="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 text-cyan-400"
                 size={19}
@@ -422,15 +449,17 @@ export default function DocumentConverter({
 
           {result && (
             <div className="mt-7">
-              <div className="flex flex-col gap-4 rounded-xl border border-cyan-400/20 bg-cyan-400/[0.04] p-5 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-col gap-4 rounded-xl border border-cyan-400/20 bg-cyan-400/4 p-5 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center gap-3">
                   <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-400/10 text-emerald-400">
                     <CheckCircle2 size={22} />
                   </div>
+
                   <div>
                     <h3 className="font-semibold text-white">
                       Conversion completed
                     </h3>
+
                     <p className="mt-1 text-xs text-slate-400">
                       Your document is ready to preview or download.
                     </p>
@@ -443,14 +472,17 @@ export default function DocumentConverter({
                     onClick={() => setPreviewOpen(true)}
                     className="flex items-center justify-center gap-2 rounded-lg border border-cyan-400/30 bg-cyan-400/10 px-4 py-2.5 text-sm font-semibold text-cyan-300 transition hover:border-cyan-400 hover:bg-cyan-400/20"
                   >
-                    <Eye size={17} /> Preview
+                    <Eye size={17} />
+                    Preview
                   </button>
+
                   <button
                     type="button"
                     onClick={handleDownload}
                     className="flex items-center justify-center gap-2 rounded-lg bg-cyan-400 px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300"
                   >
-                    <Download size={17} /> Download
+                    <Download size={17} />
+                    Download
                   </button>
                 </div>
               </div>
@@ -464,38 +496,51 @@ export default function DocumentConverter({
       </div>
 
       {previewOpen && result && (
-        <div className="fixed inset-0 z-[100] flex h-screen w-screen flex-col bg-[#070b14]">
+        <div className="fixed inset-0 z-99999 flex h-screen w-screen flex-col bg-[#070b14]">
+          {/* Preview header */}
           <div className="flex shrink-0 items-center justify-between border-b border-white/10 bg-[#111c2d] px-5 py-4 sm:px-8">
             <div className="flex min-w-0 items-center gap-3">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-cyan-400/10 text-cyan-400">
                 <FileText size={21} />
               </div>
+
               <div className="min-w-0">
-                <h2 className="font-semibold text-white">Document Preview</h2>
-                <p className="truncate text-xs text-slate-400">{file?.name}</p>
+                <h2 className="font-semibold text-white">
+                  Document Preview
+                </h2>
+
+                <p className="truncate text-xs text-slate-400">
+                  {file?.name}
+                </p>
               </div>
             </div>
+
+            {/* Visible close button */}
             <button
               type="button"
-              onClick={() => setPreviewOpen(false)}
+              onClick={closePreview}
               aria-label="Close preview"
-              className="rounded-lg border border-white/10 p-2 text-slate-400 transition hover:border-red-400/30 hover:bg-red-400/10 hover:text-red-400"
+              title="Close preview"
+              className="ml-4 flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-red-400/40 bg-red-500/20 text-red-400 shadow-lg shadow-red-950/30 transition-all duration-200 hover:scale-110 hover:border-red-400 hover:bg-red-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-red-400 focus:ring-offset-2 focus:ring-offset-[#111c2d]"
             >
-              <X size={20} />
+              <X size={25} strokeWidth={2.8} />
             </button>
           </div>
 
+          {/* Preview status bar */}
           <div className="flex shrink-0 items-center justify-between border-b border-white/5 px-5 py-3 sm:px-8">
             <div className="flex items-center gap-2 text-xs text-slate-400">
               <span className="h-2 w-2 rounded-full bg-emerald-400" />
               Preview ready
             </div>
+
             <div className="flex items-center gap-2 text-xs font-medium text-cyan-400">
               <Maximize2 size={14} />
               Full Screen Preview
             </div>
           </div>
 
+          {/* Document content */}
           <div className="min-h-0 flex-1 overflow-y-auto bg-[#080d17] p-4 sm:p-8 lg:p-12">
             <div className="mx-auto min-h-full w-full max-w-5xl rounded-lg border border-slate-200/10 bg-[#f8fafc] px-6 py-10 text-slate-800 shadow-2xl sm:px-12 sm:py-14 lg:px-20 lg:py-16">
               <div className="mb-8 flex items-center justify-between border-b border-slate-200 pb-5">
@@ -503,16 +548,18 @@ export default function DocumentConverter({
                   <p className="text-xs font-bold uppercase tracking-[2px] text-cyan-700">
                     eSparks Document Conversion
                   </p>
+
                   <p className="mt-1 text-xs text-slate-400">
                     Converted Document
                   </p>
                 </div>
+
                 <span className="rounded-full bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-700">
                   {extensions[outputFormat as Format]}
                 </span>
               </div>
 
-              <article className="break-words font-serif text-sm leading-8 text-slate-700">
+              <article className="wrap-break-word font-serif text-sm leading-8 text-slate-700">
                 {result.split("\n").map((line, index) => {
                   const heading = line.match(/^(#{1,6})\s+(.+)$/);
                   const listItem = line.match(/^\s*[-*+]\s+(.+)$/);
@@ -520,11 +567,13 @@ export default function DocumentConverter({
 
                   if (heading) {
                     const level = heading[1].length;
-                    const headingClass = level === 1
-                      ? "mt-8 mb-4 text-3xl font-bold text-slate-900"
-                      : level === 2
-                      ? "mt-7 mb-3 text-2xl font-bold text-slate-900"
-                      : "mt-5 mb-2 text-lg font-bold text-slate-900";
+
+                    const headingClass =
+                      level === 1
+                        ? "mt-8 mb-4 text-3xl font-bold text-slate-900"
+                        : level === 2
+                        ? "mt-7 mb-3 text-2xl font-bold text-slate-900"
+                        : "mt-5 mb-2 text-lg font-bold text-slate-900";
 
                     return (
                       <div key={index} className={headingClass}>
@@ -541,9 +590,15 @@ export default function DocumentConverter({
                     );
                   }
 
-                  if (!line.trim()) return <div key={index} className="h-3" />;
+                  if (!line.trim()) {
+                    return <div key={index} className="h-3" />;
+                  }
 
-                  return <p key={index} className="mb-2">{line}</p>;
+                  return (
+                    <p key={index} className="mb-2">
+                      {line}
+                    </p>
+                  );
                 })}
               </article>
 
@@ -553,18 +608,31 @@ export default function DocumentConverter({
             </div>
           </div>
 
-          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-white/10 bg-[#111c2d] px-5 py-4 sm:px-8">
+          {/* Preview footer */}
+          <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-white/10 bg-[#111c2d] px-5 py-4 sm:px-8">
             <span className="text-xs text-slate-400">
               eSparks Document Conversion · Preview
             </span>
-            <button
-              type="button"
-              onClick={handleDownload}
-              className="flex items-center justify-center gap-2 rounded-lg bg-cyan-400 px-5 py-2.5 text-sm font-bold text-slate-950 transition hover:bg-cyan-300"
-            >
-              <Download size={17} />
-              Download Document
-            </button>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={closePreview}
+                className="flex items-center justify-center gap-2 rounded-lg border border-red-400/30 bg-red-500/10 px-4 py-2.5 text-sm font-semibold text-red-400 transition hover:bg-red-500 hover:text-white"
+              >
+                <X size={17} />
+                Close Preview
+              </button>
+
+              <button
+                type="button"
+                onClick={handleDownload}
+                className="flex items-center justify-center gap-2 rounded-lg bg-cyan-400 px-5 py-2.5 text-sm font-bold text-slate-950 transition hover:bg-cyan-300"
+              >
+                <Download size={17} />
+                Download Document
+              </button>
+            </div>
           </div>
         </div>
       )}

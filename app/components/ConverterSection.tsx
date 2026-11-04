@@ -5,7 +5,7 @@ import { FileText, File, Presentation, FileCode2, ArrowUpRight } from "lucide-re
 const converters = [
   {
     title: "Word to Markdown",
-    href: "/?type=word-to-markdown",
+    href: "/?converter=word-to-markdown",
     icon: FileText,
     from: "DOCX",
     to: "MD",
@@ -13,7 +13,7 @@ const converters = [
   },
   {
     title: "PDF to Markdown",
-    href: "/?type=pdf-to-markdown",
+    href: "/?converter=pdf-to-markdown",
     icon: File,
     from: "PDF",
     to: "MD",
@@ -21,7 +21,7 @@ const converters = [
   },
   {
     title: "PowerPoint to Markdown",
-    href: "/?type=powerpoint-to-markdown",
+    href: "/?converter=powerpoint-to-markdown",
     icon: Presentation,
     from: "PPTX",
     to: "MD",
@@ -29,7 +29,7 @@ const converters = [
   },
   {
     title: "Markdown to Word",
-    href: "/?type=markdown-to-word",
+    href: "/?converter=markdown-to-word",
     icon: FileCode2,
     from: "MD",
     to: "DOCX",
@@ -37,7 +37,7 @@ const converters = [
   },
   {
     title: "Markdown to PDF",
-    href: "/?type=markdown-to-pdf",
+    href: "/?converter=markdown-to-pdf",
     icon: File,
     from: "MD",
     to: "PDF",
@@ -45,7 +45,7 @@ const converters = [
   },
   {
     title: "Markdown to PowerPoint",
-    href: "/?type=markdown-to-powerpoint",
+    href: "/?converter=markdown-to-powerpoint",
     icon: Presentation,
     from: "MD",
     to: "PPTX",

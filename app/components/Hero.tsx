@@ -10,7 +10,7 @@ const formats = [
 
 export default function Hero() {
   return (
-    <section className="relative overflow-hidden border-b border-white/5">
+    <section className="relative overflow-hidden border-b border-white/5 mt-10">
       <div className="grid-background absolute inset-0 opacity-40" />
       <div className="absolute -left-40 top-20 h-80 w-80 rounded-full bg-cyan-500/10 blur-[120px]" />
       <div className="absolute -right-40 top-20 h-80 w-80 rounded-full bg-blue-500/10 blur-[120px]" />

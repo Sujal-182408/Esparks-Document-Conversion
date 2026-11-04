@@ -1,15 +1,35 @@
-
 "use client";
 
+import dynamic from "next/dynamic";
 import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Navbar from "./components/Navbar";
 import Hero from "./components/Hero";
-import ConverterSection from "./components/ConverterSection";
-import HowItWorks from "./components/HowItWorks";
-import About from "./components/About";
-import Footer from "./components/Footer";
-import DocumentConverter from "./components/DocumentConverter";
+
+const DocumentConverter = dynamic(
+  () => import("./components/DocumentConverter"),
+  { loading: () => <div className="min-h-[500px]" /> }
+);
+
+const ConverterSection = dynamic(
+  () => import("./components/ConverterSection"),
+  { loading: () => <div className="min-h-[300px]" /> }
+);
+
+const HowItWorks = dynamic(
+  () => import("./components/HowItWorks"),
+  { loading: () => <div className="min-h-[400px]" /> }
+);
+
+const About = dynamic(
+  () => import("./components/About"),
+  { loading: () => <div className="min-h-[300px]" /> }
+);
+
+const Footer = dynamic(
+  () => import("./components/Footer"),
+  { loading: () => <div className="min-h-[150px]" /> }
+);
 
 const converters = {
   "word-to-markdown": {
@@ -20,7 +40,7 @@ const converters = {
   },
   "pdf-to-markdown": {
     title: "PDF to Markdown Converter",
-    description: "Convert PDF documents into Markdown format.",
+    description: "Convert PDF documents into Markdown.",
     inputFormat: "pdf",
     outputFormat: "md"
   },
@@ -32,19 +52,19 @@ const converters = {
   },
   "markdown-to-word": {
     title: "Markdown to Word Converter",
-    description: "Convert Markdown files into downloadable Word documents.",
+    description: "Convert Markdown into Word documents.",
     inputFormat: "md",
     outputFormat: "docx"
   },
   "markdown-to-pdf": {
     title: "Markdown to PDF Converter",
-    description: "Create a downloadable PDF document from Markdown files.",
+    description: "Convert Markdown into PDF documents.",
     inputFormat: "md",
     outputFormat: "pdf"
   },
   "markdown-to-powerpoint": {
     title: "Markdown to PowerPoint Converter",
-    description: "Turn Markdown content into a formatted PowerPoint presentation.",
+    description: "Convert Markdown into PowerPoint presentations.",
     inputFormat: "md",
     outputFormat: "pptx"
   }
@@ -52,52 +72,51 @@ const converters = {
 
 function HomeContent() {
   const searchParams = useSearchParams();
-  const type = searchParams.get("type");
-  const selected = type
-    ? converters[type as keyof typeof converters]
+  const converter = searchParams.get("converter");
+  const selected = converter
+    ? converters[converter as keyof typeof converters]
     : undefined;
-
-  if (selected) {
-    return (
-      <main className="min-h-screen bg-[#070b14] text-white">
-        <Navbar />
-        <section className="grid-background border-b border-white/5 px-5 py-16 text-center sm:py-20">
-          <div className="container-main">
-            <p className="mb-4 text-xs font-semibold uppercase tracking-[3px] text-cyan-400">
-              eSparks Document Conversion
-            </p>
-            <h1 className="text-3xl font-bold text-white sm:text-5xl">
-              {selected.title}
-            </h1>
-            <p className="mx-auto mt-5 max-w-2xl text-sm leading-7 text-slate-400 sm:text-base">
-              {selected.description}
-            </p>
-          </div>
-        </section>
-        <DocumentConverter
-          initialInputFormat={selected.inputFormat}
-          initialOutputFormat={selected.outputFormat}
-        />
-        <Footer />
-      </main>
-    );
-  }
 
   return (
     <main className="min-h-screen overflow-hidden bg-[#070b14] text-white">
-      <div className="pointer-events-none fixed inset-0 z-0 overflow-hidden">
-        <div className="absolute -top-48 left-1/2 h-[460px] w-[760px] -translate-x-1/2 rounded-full bg-cyan-500/[0.08] blur-[130px]" />
-        <div className="absolute right-[-180px] top-[550px] h-[380px] w-[380px] rounded-full bg-blue-500/[0.07] blur-[110px]" />
-      </div>
-      <div className="relative z-10">
-        <Navbar />
-        <Hero />
-        <DocumentConverter />
-        <ConverterSection />
-        <HowItWorks />
-        <About />
-        <Footer />
-      </div>
+      <Navbar />
+
+      {selected ? (
+        <>
+          <section className="grid-background border-b border-white/5 px-5 py-16 text-center sm:py-20">
+            <div className="container-main">
+              <p className="mb-4 text-xs font-semibold uppercase tracking-[3px] text-cyan-400">
+                eSparks Document Conversion
+              </p>
+              <h1 className="text-3xl font-bold sm:text-5xl">
+                {selected.title}
+              </h1>
+              <p className="mx-auto mt-5 max-w-2xl text-sm leading-7 text-slate-400 sm:text-base">
+                {selected.description}
+              </p>
+            </div>
+          </section>
+
+          <DocumentConverter
+            initialInputFormat={selected.inputFormat}
+            initialOutputFormat={selected.outputFormat}
+          />
+        </>
+      ) : converter ? (
+        <section className="container-main py-24 text-center">
+          <h1 className="text-3xl font-bold">Converter Not Found</h1>
+        </section>
+      ) : (
+        <>
+          <Hero />
+          <DocumentConverter />
+          <ConverterSection />
+          <HowItWorks />
+          <About />
+        </>
+      )}
+
+      <Footer />
     </main>
   );
 }
