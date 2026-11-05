@@ -30,6 +30,16 @@ function isTableToken(token: Token): token is Tokens.Table {
   );
 }
 
+function isImageToken(token: Token): token is Tokens.Image {
+  return (
+    token.type === "image" &&
+    "href" in token &&
+    typeof token.href === "string" &&
+    "text" in token &&
+    typeof token.text === "string"
+  );
+}
+
 function plainText(tokens: Token[]): string {
   return tokens
     .map((token) => {
@@ -319,37 +329,132 @@ export async function convertMarkdownToPowerPoint(
     }
   };
 
-  const addTextBlock = (
+  const addImageBlock = async (token: Tokens.Image) => {
+    if (!/^data:image\/(png|jpe?g|gif);base64,/i.test(token.href)) {
+      throw new Error(
+        "PowerPoint conversion requires images to be embedded as PNG, JPEG, or GIF data URIs."
+      );
+    }
+
+    const dimensions = await new Promise<{ width: number; height: number } | null>(
+      (resolve) => {
+        const image = new Image();
+        image.onload = () =>
+          resolve({ width: image.naturalWidth, height: image.naturalHeight });
+        image.onerror = () => resolve(null);
+        image.src = token.href;
+      }
+    );
+
+    if (!dimensions || dimensions.width === 0 || dimensions.height === 0) {
+      throw new Error("An embedded Markdown image could not be decoded.");
+    }
+
+    const scale = Math.min(
+      BODY_WIDTH / dimensions.width,
+      3.8 / dimensions.height,
+      1
+    );
+    const width = dimensions.width * scale;
+    const height = dimensions.height * scale;
+
+    if (y + height > CONTENT_BOTTOM && hasContent) {
+      addSlide(`${slideTitle} (continued)`);
+    }
+
+    slide.addImage({
+      data: token.href,
+      x: BODY_X + (BODY_WIDTH - width) / 2,
+      y,
+      w: width,
+      h: height,
+      altText: token.text || "Markdown image",
+    });
+    y += height + 0.18;
+    hasContent = true;
+  };
+
+  const addTextBlock = async (
     tokens: Token[],
     options: Parameters<typeof addRichContent>[1] = {}
   ) => {
-    addRichContent(inlineRuns(tokens), options);
+    let textTokens: Token[] = [];
+
+    const flushText = () => {
+      if (textTokens.length) addRichContent(inlineRuns(textTokens), options);
+      textTokens = [];
+    };
+
+    for (const token of tokens) {
+      if (isImageToken(token)) {
+        flushText();
+        await addImageBlock(token);
+      } else {
+        textTokens.push(token);
+      }
+    }
+
+    flushText();
   };
 
-  const addList = (token: Tokens.List, level = 0) => {
+  const addList = async (token: Tokens.List, level = 0) => {
     for (const [index, item] of token.items.entries()) {
-      const itemRuns = inlineRuns(item.tokens);
       const prefix = token.ordered
         ? `${Number(token.start || 1) + index}. `
         : "";
 
-      if (prefix) {
-        itemRuns.unshift({ text: prefix, options: { bold: true } });
-      }
+      if (!item.tokens.some(isImageToken)) {
+        const itemRuns = inlineRuns(item.tokens);
+        if (prefix) itemRuns.unshift({ text: prefix, options: { bold: true } });
+        addRichContent(itemRuns, {
+          bulletLevel: token.ordered ? undefined : level,
+        });
+      } else {
+        let textTokens: Token[] = [];
+        let firstBlock = true;
+        const flushText = () => {
+          if (!textTokens.length) return;
+          const runs = inlineRuns(textTokens);
+          if (prefix && firstBlock) {
+            runs.unshift({ text: prefix, options: { bold: true } });
+          }
+          addRichContent(runs, {
+            bulletLevel: token.ordered ? undefined : level,
+          });
+          firstBlock = false;
+          textTokens = [];
+        };
 
-      addRichContent(itemRuns, {
-        bulletLevel: token.ordered ? undefined : level,
-      });
+        for (const child of item.tokens) {
+          if (isImageToken(child)) {
+            flushText();
+            await addImageBlock(child);
+          } else {
+            textTokens.push(child);
+          }
+        }
+        flushText();
+        if (prefix && firstBlock) {
+          addRichContent([{ text: prefix, options: { bold: true } }]);
+        }
+      }
 
       for (const child of item.tokens) {
         if (isListToken(child)) {
-          addList(child, level + 1);
+          await addList(child, level + 1);
         }
       }
     }
   };
 
   const addTable = (token: Tokens.Table) => {
+    const tableCells = [token.header, ...token.rows].flat();
+    if (tableCells.some((cell) => cell.tokens.some(isImageToken))) {
+      throw new Error(
+        "PowerPoint conversion does not support images inside Markdown tables."
+      );
+    }
+
     const columnCount = Math.max(1, token.header.length);
     const columnWidths = Array.from(
       { length: columnCount },
@@ -466,18 +571,18 @@ export async function convertMarkdownToPowerPoint(
       case "paragraph":
       case "text":
         if ("tokens" in token && token.tokens) {
-          addTextBlock(token.tokens);
+          await addTextBlock(token.tokens);
         } else {
           addRichContent([{ text: plainText([token]) }]);
         }
         break;
 
       case "list":
-        if (isListToken(token)) addList(token);
+        if (isListToken(token)) await addList(token);
         break;
 
       case "blockquote":
-        addTextBlock(token.tokens ?? [], {
+        await addTextBlock(token.tokens ?? [], {
           quote: true,
           italic: true,
           color: "475569",
@@ -518,7 +623,7 @@ export async function convertMarkdownToPowerPoint(
 
       default:
         if ("tokens" in token && Array.isArray(token.tokens)) {
-          addTextBlock(token.tokens);
+          await addTextBlock(token.tokens);
         } else if ("text" in token && typeof token.text === "string") {
           addRichContent([{ text: token.text }]);
         }

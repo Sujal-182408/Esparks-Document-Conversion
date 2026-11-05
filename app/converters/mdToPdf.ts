@@ -61,7 +61,11 @@ export async function convertMarkdownToPdf(
       h4, h5, h6 { font-size: 17px; }
       p, ul, ol { margin: 0 0 14px; }
       ul, ol { padding-left: 26px; }
-      li { margin: 0 0 5px; }
+      li { margin: 0 0 5px; page-break-inside: avoid; break-inside: avoid; }
+      p, blockquote, pre, img, tr {
+        page-break-inside: avoid;
+        break-inside: avoid;
+      }
       strong { color: #0f172a; }
       del { color: #64748b; }
       code {
@@ -93,6 +97,7 @@ export async function convertMarkdownToPdf(
         padding: 7px 9px;
         text-align: left;
         vertical-align: top;
+        overflow-wrap: anywhere;
       }
       th { background: #e2f8fc; color: #0f172a; }
       a { color: #0369a1; overflow-wrap: anywhere; }

@@ -1,5 +1,4 @@
 
-// @ts-ignore -- `docx` declarations may be missing in some environments.
 import {
   Document,
   HeadingLevel,
@@ -12,6 +11,7 @@ import {
   TableCell,
   WidthType,
   BorderStyle,
+  ImageRun,
 } from "docx";
 import { marked, type Token, type Tokens } from "marked";
 
@@ -26,8 +26,72 @@ type InlineToken =
   | Tokens.Escape
   | Tokens.Image;
 
-function inlineRuns(tokens: InlineToken[]): (TextRun | ExternalHyperlink)[] {
-  const runs: (TextRun | ExternalHyperlink)[] = [];
+function imageRunFromDataUri(src: string, alt: string): ImageRun | null {
+  const match = src.match(
+    /^data:image\/(png|jpe?g|gif|bmp);base64,([A-Za-z0-9+/=]+)$/i
+  );
+  if (!match) return null;
+
+  const imageType = match[1].toLowerCase();
+  const type = imageType === "jpeg" ? "jpg" : imageType;
+  const binary = atob(match[2]);
+  const data = Uint8Array.from(binary, (character) => character.charCodeAt(0));
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  let width = 400;
+  let height = 300;
+
+  if (type === "png" && data.length >= 24) {
+    width = view.getUint32(16);
+    height = view.getUint32(20);
+  } else if (type === "gif" && data.length >= 10) {
+    width = view.getUint16(6, true);
+    height = view.getUint16(8, true);
+  } else if (type === "bmp" && data.length >= 26) {
+    width = Math.abs(view.getInt32(18, true));
+    height = Math.abs(view.getInt32(22, true));
+  } else if (type === "jpg") {
+    let offset = 2;
+    while (offset + 9 < data.length) {
+      if (data[offset] !== 0xff) {
+        offset += 1;
+        continue;
+      }
+
+      const marker = data[offset + 1];
+      const segmentLength = view.getUint16(offset + 2);
+      if (
+        [0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf]
+          .includes(marker)
+      ) {
+        height = view.getUint16(offset + 5);
+        width = view.getUint16(offset + 7);
+        break;
+      }
+      if (segmentLength < 2) break;
+      offset += 2 + segmentLength;
+    }
+  }
+
+  const scale = Math.min(
+    1,
+    450 / Math.max(1, width),
+    600 / Math.max(1, height)
+  );
+  return new ImageRun({
+    data,
+    type: type as "png" | "jpg" | "gif" | "bmp",
+    transformation: {
+      width: Math.max(1, Math.round(width * scale)),
+      height: Math.max(1, Math.round(height * scale)),
+    },
+    altText: { name: alt || "Markdown image" },
+  });
+}
+
+function inlineRuns(
+  tokens: InlineToken[]
+): (TextRun | ExternalHyperlink | ImageRun)[] {
+  const runs: (TextRun | ExternalHyperlink | ImageRun)[] = [];
 
   for (const token of tokens) {
     switch (token.type) {
@@ -91,14 +155,15 @@ function inlineRuns(tokens: InlineToken[]): (TextRun | ExternalHyperlink)[] {
         break;
 
       case "image":
-        // Preserve the image reference as readable text.
-        // Embedding image files requires a separate image-handling strategy.
-        runs.push(
-          new TextRun({
-            text: `[Image: ${token.text || token.href}]`,
-            italics: true,
-          })
-        );
+        {
+          const imageRun = imageRunFromDataUri(token.href, token.text);
+          if (!imageRun) {
+            throw new Error(
+              "Word conversion requires images to be embedded as PNG, JPEG, GIF, or BMP data URIs."
+            );
+          }
+          runs.push(imageRun);
+        }
         break;
     }
   }
@@ -137,7 +202,10 @@ function makeParagraph(
   });
 }
 
-function convertTokens(tokens: Token[]): (Paragraph | Table)[] {
+function convertTokens(
+  tokens: Token[],
+  quote = false
+): (Paragraph | Table)[] {
   const output: (Paragraph | Table)[] = [];
 
   for (const token of tokens) {
@@ -161,23 +229,17 @@ function convertTokens(tokens: Token[]): (Paragraph | Table)[] {
       }
 
       case "paragraph":
-        output.push(makeParagraph(token));
+        output.push(makeParagraph(token, { quote }));
         break;
 
       case "text":
         if (token.tokens) {
-          output.push(makeParagraph(token));
+          output.push(makeParagraph(token, { quote }));
         }
         break;
 
       case "blockquote":
-        output.push(
-          new Paragraph({
-            children: [new TextRun({ text: "Quote", bold: true })],
-            indent: { left: 600 },
-          })
-        );
-        output.push(...convertTokens(token.tokens ?? []));
+        output.push(...convertTokens(token.tokens ?? [], true));
         break;
 
       case "list":
@@ -234,38 +296,28 @@ function convertTokens(tokens: Token[]): (Paragraph | Table)[] {
         break;
 
       case "table": {
+        const tableToken = token as Tokens.Table;
         const rows = [
-          token.header,
-          ...token.rows.flat(),
+          tableToken.header,
+          ...tableToken.rows,
         ];
 
         const tableRows: TableRow[] = rows.map((row, rowIndex) => {
-          const cells = Array.isArray(row) ? row : [row];
-
           return new TableRow({
-            children: cells.map((cell) => {
-              const cellTokens =
-                typeof cell === "string"
-                  ? (marked.lexer(cell)[0] as Token | undefined)
-                  : undefined;
-
-              const text =
-                typeof cell === "string"
-                  ? cell
-                  : cell.text;
-
+            children: row.map((cell) => {
               return new TableCell({
                 children: [
                   new Paragraph({
-                    children: [
-                      new TextRun({
-                        text,
-                        bold: rowIndex === 0,
-                      }),
-                    ],
+                    children:
+                      rowIndex === 0
+                        ? [new TextRun({ text: cell.text, bold: true })]
+                        : inlineRuns(cell.tokens as InlineToken[]),
                   }),
                 ],
-                width: { size: 100 / cells.length, type: WidthType.PERCENTAGE },
+                width: {
+                  size: 100 / row.length,
+                  type: WidthType.PERCENTAGE,
+                },
               });
             }),
           });
@@ -342,7 +394,14 @@ export async function convertMarkdownToWord(
     });
 
     return await Packer.toBlob(document);
-  } catch {
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      error.message.startsWith("Word conversion requires images")
+    ) {
+      throw error;
+    }
+
     throw new Error(
       "Unable to create the Word document. Check the Markdown content and try again."
     );
