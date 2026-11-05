@@ -63,24 +63,21 @@ export async function wordToMarkdown(file: File): Promise<string> {
         "p.Heading2 => h2:fresh",
         "p[style-name='Heading 2'] => h2:fresh",
         "p[style-name='heading 2'] => h2:fresh",
-        "p.Heading3 => h2:fresh",
-        "p[style-name='Heading 3'] => h2:fresh",
-        "p[style-name='heading 3'] => h2:fresh",
-        "p.Heading4 => h2:fresh",
-        "p[style-name='Heading 4'] => h2:fresh",
-        "p[style-name='heading 4'] => h2:fresh",
-        "p.Heading5 => h2:fresh",
-        "p[style-name='Heading 5'] => h2:fresh",
-        "p[style-name='heading 5'] => h2:fresh",
-        "p.Heading6 => h2:fresh",
-        "p[style-name='Heading 6'] => h2:fresh",
-        "p[style-name='heading 6'] => h2:fresh",
+        "p.Heading3 => h3:fresh",
+        "p[style-name='Heading 3'] => h3:fresh",
+        "p[style-name='heading 3'] => h3:fresh",
+        "p.Heading4 => h4:fresh",
+        "p[style-name='Heading 4'] => h4:fresh",
+        "p[style-name='heading 4'] => h4:fresh",
+        "p.Heading5 => h5:fresh",
+        "p[style-name='Heading 5'] => h5:fresh",
+        "p[style-name='heading 5'] => h5:fresh",
+        "p.Heading6 => h6:fresh",
+        "p[style-name='Heading 6'] => h6:fresh",
+        "p[style-name='heading 6'] => h6:fresh",
       ],
     });
-    const markdown = turnDown
-      .turndown(result.value)
-      .replace(/^#{3,6}(?=\s)/gm, "##")
-      .trim();
+    const markdown = turnDown.turndown(result.value).trim();
     if (!markdown) {
       throw new Error(
         "No convertible text was found in this Word document."

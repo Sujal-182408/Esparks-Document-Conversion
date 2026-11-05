@@ -5,7 +5,7 @@ import { useRef, useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   Upload, FileText, Download, RefreshCw, X,
-  CheckCircle2, AlertCircle, ChevronDown, Eye, Maximize2
+  CheckCircle2, AlertCircle, ChevronDown, Eye
 } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -30,6 +30,11 @@ import { conversionOptions, type Format } from "../converters/conversionOptions"
 type DocumentConverterProps = {
   initialInputFormat?: Format;
   initialOutputFormat?: Format;
+};
+
+type GeneratedDocument = {
+  blob: Blob;
+  format: "docx" | "pdf" | "pptx";
 };
 
 const validFormats: Format[] = ["docx", "pdf", "pptx", "md"];
@@ -167,7 +172,7 @@ export default function DocumentConverter({
   const [inputFormat, setInputFormat] = useState<Format | null>(null);
   const [outputFormat, setOutputFormat] = useState<Format | "">("");
   const [result, setResult] = useState("");
-  const [generatedFile, setGeneratedFile] = useState<Blob | null>(null);
+  const [generatedFile, setGeneratedFile] = useState<GeneratedDocument | null>(null);
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState("");
@@ -214,10 +219,6 @@ export default function DocumentConverter({
   const outputOptions = inputFormat
     ? conversionOptions[inputFormat]
     : [];
-
-  const closePreview = () => {
-    setPreviewOpen(false);
-  };
 
   const selectFile = (selectedFile?: File) => {
     setError("");
@@ -295,19 +296,19 @@ export default function DocumentConverter({
         const wordFile = await convertMarkdownToWord(markdown);
 
         setResult(markdown);
-        setGeneratedFile(wordFile);
+        setGeneratedFile({ blob: wordFile, format: "docx" });
       } else if (inputFormat === "md" && outputFormat === "pdf") {
         const markdown = await file.text();
         const pdfFile = await convertMarkdownToPdf(markdown);
 
         setResult(markdown);
-        setGeneratedFile(pdfFile);
+        setGeneratedFile({ blob: pdfFile, format: "pdf" });
       } else if (inputFormat === "md" && outputFormat === "pptx") {
         const markdown = await file.text();
         const powerpointFile = await convertMarkdownToPowerPoint(markdown);
 
         setResult(markdown);
-        setGeneratedFile(powerpointFile);
+        setGeneratedFile({ blob: powerpointFile, format: "pptx" });
       } else {
         throw new Error("This conversion has not been implemented yet.");
       }
@@ -326,16 +327,29 @@ export default function DocumentConverter({
     }
   };
 
-  const handleDownload = () => {
-    if (!result || !file || !inputFormat || !outputFormat) return;
+  const handleDownload = async () => {
+    if (!file) return;
 
-    let filename = file.name.replace(/\.[^.]+$/, ".md");
+    if (generatedFile) {
+      if (generatedFile.format === "docx") {
+        await downloadWordFile(generatedFile.blob, file.name);
+      } else {
+        downloadConvertedFile(
+          generatedFile.blob,
+          file.name,
+          generatedFile.format === "pdf" ? ".pdf" : ".pptx"
+        );
+      }
+      return;
+    }
 
-    if (inputFormat === "docx") filename = markdownFilename(file.name);
-    if (inputFormat === "pdf") filename = pdfMarkdownFilename(file.name);
-    if (inputFormat === "pptx") filename = powerpointMarkdownFilename(file.name);
-
-    downloadTextFile(result, filename);
+    if (outputFormat === "md" && result && inputFormat) {
+      downloadTextFile(
+        result,
+        markdownOutputFilename(file.name, inputFormat),
+        "text/markdown;charset=utf-8"
+      );
+    }
   };
 
   const reset = () => {
@@ -576,7 +590,7 @@ export default function DocumentConverter({
                       Conversion completed
                     </h3>
                     <p className="mt-1 text-xs text-slate-400">
-                      Your document is ready.
+                      {formatNames[outputFormat as Format]} is ready to download.
                     </p>
                   </div>
                 </div>
@@ -624,8 +638,12 @@ export default function DocumentConverter({
               </div>
 
               <div className="min-w-0">
-                <h2 className="font-semibold text-white">Document Preview</h2>
-                <p className="truncate text-xs text-slate-400">{file?.name}</p>
+                <h2 className="font-semibold text-white">Document output</h2>
+                <p className="truncate text-xs text-slate-400">
+                  {file && outputFormat
+                    ? `${file.name.replace(/\.[^.]+$/, "")}${extensions[outputFormat]}`
+                    : ""}
+                </p>
               </div>
             </div>
             <button
@@ -638,79 +656,78 @@ export default function DocumentConverter({
             </button>
           </div>
 
-          <div className="flex shrink-0 items-center justify-between border-b border-white/5 px-5 py-3 sm:px-8">
-            <div className="flex items-center gap-2 text-xs text-slate-400">
-              <span className="h-2 w-2 rounded-full bg-emerald-400" />
-              Preview ready
+          {outputFormat === "md" && (
+            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-white/5 px-5 py-3 sm:px-8">
+              <div className="flex items-center gap-1 rounded-lg bg-white/5 p-1">
+                <button
+                  type="button"
+                  onClick={() => setPreviewMode("source")}
+                  aria-pressed={previewMode === "source"}
+                  className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                    previewMode === "source"
+                      ? "bg-cyan-400 text-slate-950"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  .md source
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPreviewMode("rendered")}
+                  aria-pressed={previewMode === "rendered"}
+                  className={`rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                    previewMode === "rendered"
+                      ? "bg-cyan-400 text-slate-950"
+                      : "text-slate-400 hover:text-white"
+                  }`}
+                >
+                  Rendered
+                </button>
+              </div>
+              <span className="text-xs text-slate-500">
+                Download contains the Markdown source
+              </span>
             </div>
-            <div className="flex items-center gap-2 text-xs font-medium text-cyan-400">
-              <Maximize2 size={14} />
-              Full Screen Preview
-            </div>
-            <span className="text-xs text-slate-500">The download is the .md source file</span>
-          </div>
+          )}
 
-          {/* PREVIEW CONTENT */}
           <div className="min-h-0 flex-1 overflow-y-auto bg-[#080d17] p-4 sm:p-8 lg:p-12">
-            <div className="mx-auto min-h-full w-full max-w-5xl rounded-lg border border-slate-200/10 bg-[#f8fafc] px-6 py-10 text-slate-800 shadow-2xl sm:px-12 sm:py-14 lg:px-20 lg:py-16">
-              <div className="mb-8 flex items-center justify-between border-b border-slate-200 pb-5">
-                <div>
-                  <p className="text-xs font-bold uppercase tracking-[2px] text-cyan-700">
-                    eSparks Document Conversion
-                  </p>
-                  <p className="mt-1 text-xs text-slate-400">
-                    Converted Document
+            <div className="mx-auto min-h-full w-full max-w-5xl rounded-xl border border-slate-200/10 bg-[#f8fafc] px-6 py-8 text-slate-800 shadow-2xl sm:px-12 sm:py-12">
+              {outputFormat === "md" ? (
+                previewMode === "source" ? (
+                  <pre className="whitespace-pre-wrap break-words font-mono text-sm leading-7 text-slate-700">
+                    {result}
+                  </pre>
+                ) : (
+                  <article className="break-words font-serif text-sm leading-7 text-slate-700">
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={markdownPreviewComponents}
+                    >
+                      {result}
+                    </ReactMarkdown>
+                  </article>
+                )
+              ) : (
+                <div className="flex min-h-64 flex-col items-center justify-center text-center">
+                  <FileText size={42} className="mb-4 text-cyan-600" />
+                  <h3 className="text-xl font-semibold text-slate-900">
+                    {formatNames[outputFormat as Format]} created
+                  </h3>
+                  <p className="mt-2 max-w-md text-sm text-slate-600">
+                    The converted file is ready. Download it to open the
+                    {` ${extensions[outputFormat as Format]}`} document.
                   </p>
                 </div>
-                <span className="rounded-full bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-700">
-                  {extensions[outputFormat as Format]}
-                </span>
-              </div>
-
-              <article className="break-words font-serif text-sm leading-8 text-slate-700">
-                {result.split("\n").map((line, index) => {
-                  const heading = line.match(/^(#{1,6})\s+(.+)$/);
-                  const listItem = line.match(/^\s*[-*+]\s+(.+)$/);
-                  const numberedItem = line.match(/^\s*\d+\.\s+(.+)$/);
-
-                  if (heading) {
-                    const level = heading[1].length;
-                    const headingClass = level === 1
-                      ? "mt-8 mb-4 text-3xl font-bold text-slate-900"
-                      : level === 2
-                      ? "mt-7 mb-3 text-2xl font-bold text-slate-900"
-                      : "mt-5 mb-2 text-lg font-bold text-slate-900";
-
-                    return (
-                      <div key={index} className={headingClass}>
-                        {heading[2]}
-                      </div>
-                    );
-                  }
-
-                  if (listItem || numberedItem) {
-                    return (
-                      <div key={index} className="ml-5 list-item list-disc pl-1">
-                        {listItem?.[1] || numberedItem?.[1]}
-                      </div>
-                    );
-                  }
-
-                  if (!line.trim()) return <div key={index} className="h-3" />;
-
-                  return <p key={index} className="mb-2">{line}</p>;
-                })}
-              </article>
-
-              <div className="mt-16 border-t border-slate-200 pt-5 text-center text-xs text-slate-400">
-                Generated with eSparks Document Conversion
-              </div>
+              )}
             </div>
           </div>
 
           <div className="flex shrink-0 items-center justify-between gap-3 border-t border-white/10 bg-[#111c2d] px-5 py-4 sm:px-8">
-            <span className="text-xs text-slate-400">
-              eSparks Document Conversion · Preview
+            <span className="truncate text-xs text-slate-400">
+              {formatNames[outputFormat as Format]} ·{" "}
+              {file
+                ? `${file.name.replace(/\.[^.]+$/, "")}${extensions[outputFormat as Format]}`
+                : ""}
             </span>
             <button
               type="button"
@@ -718,7 +735,7 @@ export default function DocumentConverter({
               className="flex items-center justify-center gap-2 rounded-lg bg-cyan-400 px-5 py-2.5 text-sm font-bold text-slate-950 transition hover:bg-cyan-300"
             >
               <Download size={17} />
-              Download Document
+              Download {extensions[outputFormat as Format]}
             </button>
           </div>
         </div>

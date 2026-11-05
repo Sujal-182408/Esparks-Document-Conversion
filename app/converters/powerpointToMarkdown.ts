@@ -227,8 +227,8 @@ export async function convertPowerPointToMarkdown(
 
       markdownSlides.push(
         headingAdded
-          ? slideLines.join("\n")
-          : `${index === 0 ? "#" : "##"} Slide ${index + 1}\n\n${slideLines.join("\n")}`
+          ? slideLines.join("\n\n")
+          : `${index === 0 ? "#" : "##"} Slide ${index + 1}\n\n${slideLines.join("\n\n")}`
       );
     }
 

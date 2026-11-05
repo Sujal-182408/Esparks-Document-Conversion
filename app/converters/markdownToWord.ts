@@ -147,7 +147,8 @@ function inlineRuns(
             children: [
               new TextRun({
                 text: token.text,
-                style: "Hyperlink",
+                color: "000000",
+                underline: { color: "000000" },
               }),
             ],
           })
@@ -185,6 +186,7 @@ function makeParagraph(
     heading?: (typeof HeadingLevel)[keyof typeof HeadingLevel];
     bullet?: boolean;
     numbered?: boolean;
+    listLevel?: number;
     quote?: boolean;
   } = {}
 ): Paragraph {
@@ -193,10 +195,11 @@ function makeParagraph(
   return new Paragraph({
     children: runs.length ? runs : [new TextRun("")],
     heading: options.heading,
-    bullet: options.bullet ? { level: 0 } : undefined,
-    numbering: options.numbered
-      ? { reference: "markdown-numbering", level: 0 }
-      : undefined,
+    numbering: options.bullet
+      ? { reference: "markdown-bullets", level: options.listLevel ?? 0 }
+      : options.numbered
+        ? { reference: "markdown-numbering", level: options.listLevel ?? 0 }
+        : undefined,
     indent: options.quote ? { left: 600 } : undefined,
     spacing: { after: 160 },
   });
@@ -204,7 +207,8 @@ function makeParagraph(
 
 function convertTokens(
   tokens: Token[],
-  quote = false
+  quote = false,
+  listLevel = 0
 ): (Paragraph | Table)[] {
   const output: (Paragraph | Table)[] = [];
 
@@ -254,13 +258,13 @@ function convertTokens(
             makeParagraph(itemToken, {
               bullet: !token.ordered,
               numbered: token.ordered,
+              listLevel,
             })
           );
 
-          // Include nested lists where present.
           for (const child of item.tokens) {
             if (child.type === "list") {
-              output.push(...convertTokens([child]));
+              output.push(...convertTokens([child], quote, listLevel + 1));
             }
           }
         }
@@ -287,7 +291,7 @@ function convertTokens(
               bottom: {
                 style: BorderStyle.SINGLE,
                 size: 6,
-                color: "808080",
+                color: "000000",
               },
             },
             spacing: { after: 200 },
@@ -328,12 +332,12 @@ function convertTokens(
             rows: tableRows,
             width: { size: 100, type: WidthType.PERCENTAGE },
             borders: {
-              top: { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" },
-              bottom: { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" },
-              left: { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" },
-              right: { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" },
-              insideHorizontal: { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" },
-              insideVertical: { style: BorderStyle.SINGLE, size: 1, color: "CCCCCC" },
+              top: { style: BorderStyle.SINGLE, size: 1, color: "888888" },
+              bottom: { style: BorderStyle.SINGLE, size: 1, color: "888888" },
+              left: { style: BorderStyle.SINGLE, size: 1, color: "888888" },
+              right: { style: BorderStyle.SINGLE, size: 1, color: "888888" },
+              insideHorizontal: { style: BorderStyle.SINGLE, size: 1, color: "888888" },
+              insideVertical: { style: BorderStyle.SINGLE, size: 1, color: "888888" },
             },
           })
         );
@@ -369,25 +373,85 @@ export async function convertMarkdownToWord(
         config: [
           {
             reference: "markdown-numbering",
-            levels: [
-              {
-                level: 0,
-                format: "decimal",
-                text: "%1.",
-                alignment: "left",
-                style: {
-                  paragraph: {
-                    indent: { left: 720, hanging: 360 },
+            levels: Array.from({ length: 6 }, (_, level) => ({
+              level,
+              format: "decimal" as const,
+              text: `%${level + 1}.`,
+              alignment: "left" as const,
+              style: {
+                paragraph: {
+                  indent: { left: 720 * (level + 1), hanging: 360 },
+                },
+              },
+            })),
+          },
+          {
+            reference: "markdown-bullets",
+            levels: Array.from({ length: 6 }, (_, level) => ({
+              level,
+              format: "bullet" as const,
+              text: "•",
+              alignment: "left" as const,
+              style: {
+                paragraph: {
+                  indent: { left: 720 * (level + 1), hanging: 360 },
+                  run: {
+                    font: "Arial",
                   },
                 },
               },
-            ],
+            })),
           },
         ],
       },
+      styles: {
+        default: {
+          document: {
+            run: { font: "Arial", size: 22, color: "000000" },
+            paragraph: { spacing: { after: 160, line: 276 } },
+          },
+          title: {
+            run: { font: "Arial", size: 36, bold: true, color: "000000" },
+            paragraph: { spacing: { before: 240, after: 240 } },
+          },
+          heading1: {
+            run: { font: "Arial", size: 32, bold: true, color: "000000" },
+            paragraph: { spacing: { before: 320, after: 160 }, keepNext: true },
+          },
+          heading2: {
+            run: { font: "Arial", size: 28, bold: true, color: "000000" },
+            paragraph: { spacing: { before: 280, after: 140 }, keepNext: true },
+          },
+          heading3: {
+            run: { font: "Arial", size: 24, bold: true, color: "000000" },
+            paragraph: { spacing: { before: 240, after: 120 }, keepNext: true },
+          },
+          heading4: {
+            run: { font: "Arial", size: 22, bold: true, color: "000000" },
+          },
+          heading5: {
+            run: { font: "Arial", size: 22, bold: true, color: "000000" },
+          },
+          heading6: {
+            run: { font: "Arial", size: 22, bold: true, color: "000000" },
+          },
+          hyperlink: {
+            run: { color: "000000", underline: { color: "000000" } },
+          },
+        },
+      },
       sections: [
         {
-          properties: {},
+          properties: {
+            page: {
+              margin: {
+                top: 1440,
+                right: 1440,
+                bottom: 1440,
+                left: 1440,
+              },
+            },
+          },
           children: convertTokens(tokens),
         },
       ],

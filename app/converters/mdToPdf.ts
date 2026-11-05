@@ -50,12 +50,12 @@ export async function convertMarkdownToPdf(
       * { box-sizing: border-box; }
       article { width: 100%; }
       h1, h2, h3, h4, h5, h6 {
-        color: #0f172a;
+        color: #000000;
         line-height: 1.25;
         margin: 1.4em 0 0.55em;
         page-break-after: avoid;
       }
-      h1 { font-size: 30px; border-bottom: 2px solid #22d3ee; padding-bottom: 10px; }
+      h1 { font-size: 30px; border-bottom: 2px solid #888888; padding-bottom: 10px; }
       h2 { font-size: 24px; }
       h3 { font-size: 20px; }
       h4, h5, h6 { font-size: 17px; }
@@ -66,43 +66,43 @@ export async function convertMarkdownToPdf(
         page-break-inside: avoid;
         break-inside: avoid;
       }
-      strong { color: #0f172a; }
-      del { color: #64748b; }
+      strong { color: #000000; }
+      del { color: #555555; }
       code {
         font-family: "Courier New", monospace;
-        background: #f1f5f9;
+        background: #eeeeee;
         border-radius: 3px;
         padding: 1px 4px;
       }
       pre {
         white-space: pre-wrap;
         overflow-wrap: anywhere;
-        background: #f1f5f9;
-        border: 1px solid #e2e8f0;
+        background: #eeeeee;
+        border: 1px solid #888888;
         border-radius: 5px;
         padding: 12px;
         page-break-inside: avoid;
       }
       pre code { background: transparent; padding: 0; }
       blockquote {
-        border-left: 4px solid #22d3ee;
-        background: #f8fafc;
+        border-left: 4px solid #888888;
+        background: #f5f5f5;
         margin: 16px 0;
         padding: 10px 16px;
-        color: #475569;
+        color: #333333;
       }
       table { border-collapse: collapse; width: 100%; margin: 16px 0; }
       th, td {
-        border: 1px solid #cbd5e1;
+        border: 1px solid #888888;
         padding: 7px 9px;
         text-align: left;
         vertical-align: top;
         overflow-wrap: anywhere;
       }
-      th { background: #e2f8fc; color: #0f172a; }
-      a { color: #0369a1; overflow-wrap: anywhere; }
+      th { background: #eeeeee; color: #000000; }
+      a { color: #000000; overflow-wrap: anywhere; }
       img { display: block; max-width: 100%; height: auto; margin: 12px auto; }
-      hr { border: 0; border-top: 1px solid #cbd5e1; margin: 22px 0; }
+      hr { border: 0; border-top: 1px solid #888888; margin: 22px 0; }
     </style>
     <article>${safeHtml}</article>
   `;

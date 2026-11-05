@@ -103,7 +103,6 @@ function inlineRuns(
       case "codespan":
         add(token.text, {
           fontFace: "Courier New",
-          color: "B45309",
           breakLine: false,
         });
         break;
@@ -112,8 +111,8 @@ function inlineRuns(
         runs.push(
           ...inlineRuns(token.tokens ?? [], {
             ...inherited,
-            color: "0369A1",
-            underline: { color: "0369A1" },
+            color: "000000",
+            underline: { color: "000000" },
             hyperlink: { url: token.href },
           })
         );
@@ -122,8 +121,8 @@ function inlineRuns(
       case "image":
         add(`[Image: ${token.text || token.href}]`, {
           italic: true,
-          color: "0369A1",
-          underline: { color: "0369A1" },
+          color: "000000",
+          underline: { color: "000000" },
           hyperlink: { url: token.href },
         });
         break;
@@ -220,8 +219,8 @@ export async function convertMarkdownToPowerPoint(
       y: 0,
       w: SLIDE_WIDTH,
       h: 0.14,
-      line: { color: "06B6D4", transparency: 100 },
-      fill: { color: "06B6D4" },
+      line: { color: "888888", transparency: 100 },
+      fill: { color: "888888" },
     });
     slide.addText(slideTitle, {
       x: 0.72,
@@ -231,7 +230,7 @@ export async function convertMarkdownToPowerPoint(
       fontFace: "Arial",
       fontSize: 28,
       bold: true,
-      color: "0F172A",
+      color: "000000",
       fit: "shrink",
       margin: 0,
       valign: "middle",
@@ -241,7 +240,7 @@ export async function convertMarkdownToPowerPoint(
       y: 1.32,
       w: 11.9,
       h: 0,
-      line: { color: "E2E8F0", width: 1 },
+      line: { color: "888888", width: 1 },
     });
     slide.addText(String(slideNumber), {
       x: 12.05,
@@ -250,7 +249,7 @@ export async function convertMarkdownToPowerPoint(
       h: 0.2,
       fontFace: "Arial",
       fontSize: 9,
-      color: "64748B",
+      color: "666666",
       align: "right",
       margin: 0,
     });
@@ -300,8 +299,8 @@ export async function convertMarkdownToPowerPoint(
           y: y + 0.02,
           w: 0.05,
           h: Math.max(0.25, height - 0.04),
-          line: { color: "06B6D4", transparency: 100 },
-          fill: { color: "06B6D4" },
+          line: { color: "888888", transparency: 100 },
+          fill: { color: "888888" },
         });
       }
 
@@ -312,7 +311,7 @@ export async function convertMarkdownToPowerPoint(
         h: height,
         fontFace: options.fontFace ?? "Arial",
         fontSize,
-        color: options.color ?? "334155",
+        color: "000000",
         bold: options.bold,
         italic: options.italic,
         fit: "shrink",
@@ -464,8 +463,8 @@ export async function convertMarkdownToPowerPoint(
       text: cell.text,
       options: {
         bold: true,
-        color: "0F172A",
-        fill: { color: "CFFAFE" },
+        color: "000000",
+        fill: { color: "EEEEEE" },
         align: cell.align ?? "left",
         valign: "middle" as const,
       },
@@ -474,7 +473,7 @@ export async function convertMarkdownToPowerPoint(
       row.map((cell, index) => ({
         text: cell.text,
         options: {
-          color: "334155",
+          color: "000000",
           fill: { color: "FFFFFF" },
           align: token.align[index] ?? "left",
           valign: "middle" as const,
@@ -538,11 +537,11 @@ export async function convertMarkdownToPowerPoint(
         h: tableHeight,
         colW: columnWidths,
         rowH: pageRowHeights,
-        border: { type: "solid", color: "CBD5E1", pt: 0.7 },
+        border: { type: "solid", color: "888888", pt: 0.7 },
         fontFace: "Arial",
         fontSize: 12,
         margin: 0.08,
-        color: "334155",
+        color: "000000",
       });
       y += tableHeight + 0.18;
       hasContent = true;
@@ -563,7 +562,7 @@ export async function convertMarkdownToPowerPoint(
           addRichContent(inlineRuns(token.tokens ?? []), {
             fontSize: token.depth === 3 ? 21 : 18,
             bold: true,
-            color: "0F172A",
+            color: "000000",
           });
         }
         break;
@@ -585,7 +584,7 @@ export async function convertMarkdownToPowerPoint(
         await addTextBlock(token.tokens ?? [], {
           quote: true,
           italic: true,
-          color: "475569",
+          color: "000000",
         });
         break;
 
@@ -593,7 +592,7 @@ export async function convertMarkdownToPowerPoint(
         addRichContent([{ text: token.text, options: { breakLine: false } }], {
           fontFace: "Courier New",
           fontSize: 13,
-          color: "0F172A",
+          color: "000000",
         });
         break;
 
@@ -611,7 +610,7 @@ export async function convertMarkdownToPowerPoint(
           y: y + 0.08,
           w: BODY_WIDTH,
           h: 0,
-          line: { color: "CBD5E1", width: 1 },
+          line: { color: "888888", width: 1 },
         });
         y += 0.28;
         hasContent = true;

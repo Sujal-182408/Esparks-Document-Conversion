@@ -19,6 +19,12 @@ function formatPdfLine(line: ExtractedLine, bodyFontSize: number): string {
   const text = line.text.trim();
   if (!text) return "";
 
+  const bullet = text.match(/^[•●▪◦‣]\s*(.+)$/);
+  if (bullet) return `- ${bullet[1]}`;
+
+  const numberedItem = text.match(/^(\d+)[.)]\s+(.+)$/);
+  if (numberedItem) return `${numberedItem[1]}. ${numberedItem[2]}`;
+
   if (line.fontSize >= bodyFontSize * 1.2) return `## ${text}`;
 
   return text;
@@ -109,7 +115,7 @@ export async function pdfToMarkdown(file: File): Promise<string> {
             : formatPdfLine(line, bodyFontSize)
         )
         .filter(Boolean)
-        .join("\n")
+        .join("\n\n")
         .trim();
       if (pageText) {
         pages.push(
