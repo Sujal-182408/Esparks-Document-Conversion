@@ -298,27 +298,22 @@ export default function DocumentConverter({
   }, [previewOpen]);
 
   return (
-    <section id="converter" className="container-main py-16">
-      <div className="mx-auto max-w-3xl">
-        <div className="mb-10 text-center">
-          <span className="mb-4 inline-block rounded-full border border-cyan-400/20 bg-cyan-400/10 px-4 py-2 text-xs font-semibold uppercase tracking-widest text-cyan-400">
-            Dynamic Document Converter
-          </span>
+    <section id="converter" className="w-full">
+      <div className="mx-auto w-full max-w-none">
 
-          <h2 className="text-3xl font-bold tracking-tight text-white sm:text-5xl">
-            Convert Your <span className="text-gradient">Documents</span>
-          </h2>
+        {/* CONVERTER CARD */}
+        <div className="glass-card glow-cyan rounded-2xl p-5 sm:p-6">
 
-          <p className="mx-auto mt-4 max-w-xl text-sm leading-7 text-slate-400 sm:text-base">
-            Upload any supported document. We detect its format automatically and show the available conversions.
-          </p>
-        </div>
-
-        <div className="glass-card glow-cyan p-6 sm:p-9">
+          {/* UPLOAD */}
           <div className="mb-6">
-            <p className="mb-3 text-sm font-semibold text-white">
-              1. Upload your document
-            </p>
+            <div className="mb-3 flex items-center justify-between">
+              <p className="text-sm font-semibold text-white">
+                1. Upload your document
+              </p>
+              <span className="text-xs text-slate-500">
+                Step 01
+              </span>
+            </div>
 
             {!file ? (
               <button
@@ -334,17 +329,17 @@ export default function DocumentConverter({
                   setDragging(false);
                   selectFile(e.dataTransfer.files[0]);
                 }}
-                className={`flex min-h-64 w-full flex-col items-center justify-center rounded-2xl border-2 border-dashed p-8 text-center transition-all ${
+                className={`flex min-h-56 w-full flex-col items-center justify-center rounded-2xl border-2 border-dashed p-6 text-center transition-all ${
                   dragging
                     ? "border-cyan-400 bg-cyan-400/10"
                     : "border-slate-700 bg-slate-950/40 hover:border-cyan-400/60"
                 }`}
               >
-                <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-2xl bg-cyan-400/10 text-cyan-400">
-                  <Upload size={30} />
+                <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-cyan-400/10 text-cyan-400">
+                  <Upload size={27} />
                 </div>
 
-                <p className="text-lg font-semibold text-white">
+                <p className="text-base font-semibold text-white">
                   Drop your file here
                 </p>
 
@@ -352,23 +347,23 @@ export default function DocumentConverter({
                   or click to browse your device
                 </p>
 
-                <span className="mt-5 rounded-lg border border-white/10 px-4 py-2 text-xs text-slate-300">
+                <span className="mt-4 rounded-lg border border-white/10 px-3 py-2 text-[11px] text-slate-300">
                   DOCX · PDF · PPTX · MD · Maximum 20 MB
                 </span>
               </button>
             ) : (
-              <div className="flex items-center gap-4 rounded-xl border border-cyan-400/20 bg-cyan-400/5 p-5">
-                <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-cyan-400/10 text-cyan-400">
-                  <FileText size={25} />
+              <div className="flex items-center gap-3 rounded-xl border border-cyan-400/20 bg-cyan-400/5 p-4">
+                <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-cyan-400/10 text-cyan-400">
+                  <FileText size={23} />
                 </div>
 
                 <div className="min-w-0 flex-1">
-                  <p className="truncate font-medium text-white">
+                  <p className="truncate text-sm font-medium text-white">
                     {file.name}
                   </p>
 
                   <p className="mt-1 text-xs text-slate-400">
-                    Detected: {formatNames[inputFormat!]} ({extensions[inputFormat!]}) ·{" "}
+                    {formatNames[inputFormat!]} ·{" "}
                     {(file.size / 1024 / 1024).toFixed(2)} MB
                   </p>
                 </div>
@@ -378,7 +373,7 @@ export default function DocumentConverter({
                   onClick={reset}
                   aria-label="Remove file"
                   title="Remove file"
-                  className="rounded-lg p-2 text-slate-400 hover:bg-white/10 hover:text-white"
+                  className="rounded-lg p-2 text-slate-400 transition hover:bg-white/10 hover:text-white"
                 >
                   <X size={19} />
                 </button>
@@ -397,10 +392,16 @@ export default function DocumentConverter({
             }}
           />
 
+          {/* OUTPUT FORMAT */}
           <div className="mb-6">
-            <p className="mb-3 text-sm font-semibold text-white">
-              2. Choose output format
-            </p>
+            <div className="mb-3 flex items-center justify-between">
+              <p className="text-sm font-semibold text-white">
+                2. Choose output format
+              </p>
+              <span className="text-xs text-slate-500">
+                Step 02
+              </span>
+            </div>
 
             <div className="relative">
               <select
@@ -414,10 +415,10 @@ export default function DocumentConverter({
                   setPreviewOpen(false);
                 }}
                 disabled={!inputFormat || busy || outputOptions.length === 0}
-                className="w-full appearance-none rounded-xl border border-white/10 bg-slate-950 px-4 py-4 pr-12 text-sm text-white outline-none transition focus:border-cyan-400 disabled:cursor-not-allowed disabled:opacity-50"
+                className="w-full appearance-none rounded-xl border border-white/10 bg-slate-950 px-4 py-3.5 pr-12 text-sm text-white outline-none transition focus:border-cyan-400 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {!inputFormat ? (
-                  <option value="">Choose a converter first</option>
+                  <option value="">Upload a document first</option>
                 ) : (
                   outputOptions.map((format) => (
                     <option key={format} value={format}>
@@ -434,12 +435,18 @@ export default function DocumentConverter({
             </div>
 
             {inputFormat && outputFormat && (
-              <p className="mt-2 text-xs text-slate-500">
-                {extensions[inputFormat]} → {extensions[outputFormat]}
-              </p>
+              <div className="mt-3 flex items-center justify-between rounded-lg bg-slate-950/60 px-3 py-2.5">
+                <span className="text-xs font-medium text-slate-400">
+                  Conversion
+                </span>
+                <span className="text-xs font-semibold text-cyan-400">
+                  {extensions[inputFormat]} → {extensions[outputFormat]}
+                </span>
+              </div>
             )}
           </div>
 
+          {/* ERROR */}
           {error && (
             <div className="mb-5 flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-300">
               <AlertCircle size={18} className="shrink-0" />
@@ -447,6 +454,7 @@ export default function DocumentConverter({
             </div>
           )}
 
+          {/* SUCCESS */}
           {success && (
             <div className="mb-5 flex items-start gap-2 rounded-lg border border-emerald-500/20 bg-emerald-500/10 p-3 text-sm text-emerald-300">
               <CheckCircle2 size={18} className="shrink-0" />
@@ -454,11 +462,12 @@ export default function DocumentConverter({
             </div>
           )}
 
+          {/* CONVERT BUTTON */}
           <button
             type="button"
             onClick={handleConvert}
             disabled={!file || !outputFormat || busy || outputOptions.length === 0}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-cyan-400 px-6 py-4 font-bold text-slate-950 transition-all hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-40"
+            className="flex w-full items-center justify-center gap-2 rounded-xl bg-cyan-400 px-6 py-4 text-sm font-bold text-slate-950 transition-all hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {busy ? (
               <>
@@ -466,25 +475,27 @@ export default function DocumentConverter({
                 Converting...
               </>
             ) : (
-              <>Convert Document <span>→</span></>
+              <>
+                Convert Document <span>→</span>
+              </>
             )}
           </button>
 
+          {/* RESULT */}
           {result && (
-            <div className="mt-7">
-              <div className="flex flex-col gap-4 rounded-xl border border-cyan-400/20 bg-cyan-400/4 p-5 sm:flex-row sm:items-center sm:justify-between">
+            <div className="mt-6">
+              <div className="flex flex-col gap-4 rounded-xl border border-cyan-400/20 bg-cyan-400/4 p-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="flex items-center gap-3">
-                  <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-emerald-400/10 text-emerald-400">
-                    <CheckCircle2 size={22} />
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-400/10 text-emerald-400">
+                    <CheckCircle2 size={21} />
                   </div>
 
                   <div>
-                    <h3 className="font-semibold text-white">
+                    <h3 className="text-sm font-semibold text-white">
                       Conversion completed
                     </h3>
-
                     <p className="mt-1 text-xs text-slate-400">
-                      Your converted document is ready to preview or download.
+                      Your document is ready.
                     </p>
                   </div>
                 </div>
@@ -513,13 +524,18 @@ export default function DocumentConverter({
           )}
         </div>
 
-        <p className="mt-5 text-center text-xs text-slate-500">
+        {/* PRIVACY NOTE */}
+        <div className="mt-4 flex items-center justify-center gap-2 text-center text-xs text-slate-500">
+          <CheckCircle2 size={14} className="text-cyan-400" />
           Your files are processed in your browser and are not uploaded to our servers.
-        </p>
+        </div>
       </div>
 
+      {/* FULL SCREEN PREVIEW */}
       {previewOpen && result && (
-        <div className="fixed inset-0 z-99999 flex h-screen w-screen flex-col bg-[#070b14]">
+        <div className="fixed inset-0 z-[99999] flex h-screen w-screen flex-col bg-[#070b14]">
+
+          {/* HEADER */}
           <div className="flex shrink-0 items-center justify-between border-b border-white/10 bg-[#111c2d] px-5 py-4 sm:px-8">
             <div className="flex min-w-0 items-center gap-3">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-cyan-400/10 text-cyan-400">
@@ -530,7 +546,6 @@ export default function DocumentConverter({
                 <h2 className="font-semibold text-white">
                   Document Preview
                 </h2>
-
                 <p className="truncate text-xs text-slate-400">
                   {file?.name}
                 </p>
@@ -548,6 +563,7 @@ export default function DocumentConverter({
             </button>
           </div>
 
+          {/* PREVIEW TOOLBAR */}
           <div className="flex shrink-0 items-center justify-between border-b border-white/5 px-5 py-3 sm:px-8">
             <div className="flex items-center gap-2 text-xs text-slate-400">
               <span className="h-2 w-2 rounded-full bg-emerald-400" />
@@ -560,6 +576,7 @@ export default function DocumentConverter({
             </div>
           </div>
 
+          {/* PREVIEW CONTENT */}
           <div className="min-h-0 flex-1 overflow-y-auto bg-[#080d17] p-4 sm:p-8 lg:p-12">
             <div className="mx-auto min-h-full w-full max-w-5xl rounded-lg border border-slate-200/10 bg-[#f8fafc] px-6 py-10 text-slate-800 shadow-2xl sm:px-12 sm:py-14 lg:px-20 lg:py-16">
               <div className="mb-8 flex items-center justify-between border-b border-slate-200 pb-5">
@@ -567,7 +584,6 @@ export default function DocumentConverter({
                   <p className="text-xs font-bold uppercase tracking-[2px] text-cyan-700">
                     eSparks Document Conversion
                   </p>
-
                   <p className="mt-1 text-xs text-slate-400">
                     Converted Document Content
                   </p>
@@ -629,6 +645,7 @@ export default function DocumentConverter({
             </div>
           </div>
 
+          {/* FOOTER */}
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-white/10 bg-[#111c2d] px-5 py-4 sm:px-8">
             <span className="text-xs text-slate-400">
               eSparks Document Conversion · Preview

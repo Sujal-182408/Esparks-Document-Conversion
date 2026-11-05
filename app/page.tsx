@@ -11,10 +11,7 @@ const DocumentConverter = dynamic(
   { loading: () => <div className="min-h-[500px]" /> }
 );
 
-const ConverterSection = dynamic(
-  () => import("./components/ConverterSection"),
-  { loading: () => <div className="min-h-[300px]" /> }
-);
+
 
 const HowItWorks = dynamic(
   () => import("./components/HowItWorks"),
@@ -97,10 +94,7 @@ function HomeContent() {
             </div>
           </section>
 
-          <DocumentConverter
-            initialInputFormat={selected.inputFormat}
-            initialOutputFormat={selected.outputFormat}
-          />
+        
         </>
       ) : converter ? (
         <section className="container-main py-24 text-center">
@@ -109,10 +103,10 @@ function HomeContent() {
       ) : (
         <>
           <Hero />
-          <DocumentConverter />
-          <ConverterSection />
+           {/* <DocumentConverter /> */}
+          {/* <ConverterSection />
           <HowItWorks />
-          <About />
+          <About /> */} 
         </>
       )}
 
