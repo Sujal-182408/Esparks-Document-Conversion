@@ -73,6 +73,7 @@ export default function DocumentConverter({
   const [inputFormat, setInputFormat] = useState<Format | null>(null);
   const [outputFormat, setOutputFormat] = useState<Format | "">("");
   const [result, setResult] = useState("");
+  const [generatedFile, setGeneratedFile] = useState<Blob | null>(null);
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [error, setError] = useState("");
@@ -107,6 +108,7 @@ export default function DocumentConverter({
     setOutputFormat(selectedOutput || "");
     setFile(null);
     setResult("");
+    setGeneratedFile(null);
     setSuccess("");
     setError("");
     setPreviewOpen(false);
@@ -126,6 +128,7 @@ export default function DocumentConverter({
     setError("");
     setSuccess("");
     setResult("");
+    setGeneratedFile(null);
     setPreviewOpen(false);
 
     if (!selectedFile) return;
@@ -179,6 +182,7 @@ export default function DocumentConverter({
     setError("");
     setSuccess("");
     setResult("");
+    setGeneratedFile(null);
     setPreviewOpen(false);
 
     try {
@@ -195,23 +199,25 @@ export default function DocumentConverter({
         const markdown = await file.text();
         const wordFile = await convertMarkdownToWord(markdown);
 
-        await downloadWordFile(wordFile, file.name);
-        setSuccess("Your Word document has been generated and downloaded.");
+        setResult(markdown);
+        setGeneratedFile(wordFile);
       } else if (inputFormat === "md" && outputFormat === "pdf") {
         const markdown = await file.text();
         const pdfFile = await convertMarkdownToPdf(markdown);
 
-        downloadConvertedFile(pdfFile, file.name, ".pdf");
-        setSuccess("Your PDF document has been generated and downloaded.");
+        setResult(markdown);
+        setGeneratedFile(pdfFile);
       } else if (inputFormat === "md" && outputFormat === "pptx") {
         const markdown = await file.text();
         const powerpointFile = await convertMarkdownToPowerPoint(markdown);
 
-        downloadConvertedFile(powerpointFile, file.name, ".pptx");
-        setSuccess("Your PowerPoint presentation has been generated and downloaded.");
+        setResult(markdown);
+        setGeneratedFile(powerpointFile);
       } else {
         throw new Error("This conversion has not been implemented yet.");
       }
+
+      setSuccess("Your document has been converted successfully. Preview or download it below.");
     } catch (err) {
       console.error("Conversion error:", err);
 
@@ -228,6 +234,20 @@ export default function DocumentConverter({
   const handleDownload = () => {
     if (!result || !file || !inputFormat || !outputFormat) return;
 
+    if (inputFormat === "md") {
+      if (!generatedFile) return;
+
+      if (outputFormat === "docx") {
+        downloadWordFile(generatedFile, file.name);
+      } else if (outputFormat === "pdf") {
+        downloadConvertedFile(generatedFile, file.name, ".pdf");
+      } else if (outputFormat === "pptx") {
+        downloadConvertedFile(generatedFile, file.name, ".pptx");
+      }
+
+      return;
+    }
+
     let filename = file.name.replace(/\.[^.]+$/, ".md");
 
     if (inputFormat === "docx") filename = markdownFilename(file.name);
@@ -240,6 +260,7 @@ export default function DocumentConverter({
   const reset = () => {
     setFile(null);
     setResult("");
+    setGeneratedFile(null);
     setError("");
     setSuccess("");
     setPreviewOpen(false);
@@ -387,8 +408,10 @@ export default function DocumentConverter({
                 onChange={(e) => {
                   setOutputFormat(e.target.value as Format);
                   setResult("");
+                  setGeneratedFile(null);
                   setSuccess("");
                   setError("");
+                  setPreviewOpen(false);
                 }}
                 disabled={!inputFormat || busy || outputOptions.length === 0}
                 className="w-full appearance-none rounded-xl border border-white/10 bg-slate-950 px-4 py-4 pr-12 text-sm text-white outline-none transition focus:border-cyan-400 disabled:cursor-not-allowed disabled:opacity-50"
@@ -461,7 +484,7 @@ export default function DocumentConverter({
                     </h3>
 
                     <p className="mt-1 text-xs text-slate-400">
-                      Your document is ready to preview or download.
+                      Your converted document is ready to preview or download.
                     </p>
                   </div>
                 </div>
@@ -497,7 +520,6 @@ export default function DocumentConverter({
 
       {previewOpen && result && (
         <div className="fixed inset-0 z-99999 flex h-screen w-screen flex-col bg-[#070b14]">
-          {/* Preview header */}
           <div className="flex shrink-0 items-center justify-between border-b border-white/10 bg-[#111c2d] px-5 py-4 sm:px-8">
             <div className="flex min-w-0 items-center gap-3">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-cyan-400/10 text-cyan-400">
@@ -515,7 +537,6 @@ export default function DocumentConverter({
               </div>
             </div>
 
-            {/* Visible close button */}
             <button
               type="button"
               onClick={closePreview}
@@ -527,7 +548,6 @@ export default function DocumentConverter({
             </button>
           </div>
 
-          {/* Preview status bar */}
           <div className="flex shrink-0 items-center justify-between border-b border-white/5 px-5 py-3 sm:px-8">
             <div className="flex items-center gap-2 text-xs text-slate-400">
               <span className="h-2 w-2 rounded-full bg-emerald-400" />
@@ -540,7 +560,6 @@ export default function DocumentConverter({
             </div>
           </div>
 
-          {/* Document content */}
           <div className="min-h-0 flex-1 overflow-y-auto bg-[#080d17] p-4 sm:p-8 lg:p-12">
             <div className="mx-auto min-h-full w-full max-w-5xl rounded-lg border border-slate-200/10 bg-[#f8fafc] px-6 py-10 text-slate-800 shadow-2xl sm:px-12 sm:py-14 lg:px-20 lg:py-16">
               <div className="mb-8 flex items-center justify-between border-b border-slate-200 pb-5">
@@ -550,12 +569,14 @@ export default function DocumentConverter({
                   </p>
 
                   <p className="mt-1 text-xs text-slate-400">
-                    Converted Document
+                    Converted Document Content
                   </p>
                 </div>
 
                 <span className="rounded-full bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-700">
-                  {extensions[outputFormat as Format]}
+                  {inputFormat === "md"
+                    ? extensions[outputFormat as Format]
+                    : ".md"}
                 </span>
               </div>
 
@@ -608,7 +629,6 @@ export default function DocumentConverter({
             </div>
           </div>
 
-          {/* Preview footer */}
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-white/10 bg-[#111c2d] px-5 py-4 sm:px-8">
             <span className="text-xs text-slate-400">
               eSparks Document Conversion · Preview
