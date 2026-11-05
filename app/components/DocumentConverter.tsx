@@ -4,17 +4,11 @@
 import { useRef, useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import {
-  Upload,
-  FileText,
-  Download,
-  RefreshCw,
-  X,
-  CheckCircle2,
-  AlertCircle,
-  ChevronDown,
-  Eye,
-  Maximize2
+  Upload, FileText, Download, RefreshCw, X,
+  CheckCircle2, AlertCircle, ChevronDown, Eye, Maximize2
 } from "lucide-react";
+import ReactMarkdown, { type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import {
   downloadTextFile,
@@ -54,12 +48,112 @@ const extensions: Record<Format, string> = {
   md: ".md"
 };
 
+const markdownPreviewComponents: Components = {
+  h1: ({ children }) => (
+    <h1 className="mb-5 mt-8 border-b border-slate-200 pb-3 text-3xl font-bold text-slate-900 first:mt-0">
+      {children}
+    </h1>
+  ),
+  h2: ({ children }) => (
+    <h2 className="mb-4 mt-7 text-2xl font-bold text-slate-900">
+      {children}
+    </h2>
+  ),
+  h3: ({ children }) => (
+    <h3 className="mb-3 mt-6 text-xl font-semibold text-slate-900">
+      {children}
+    </h3>
+  ),
+  h4: ({ children }) => (
+    <h4 className="mb-3 mt-5 text-lg font-semibold text-slate-900">
+      {children}
+    </h4>
+  ),
+  h5: ({ children }) => (
+    <h5 className="mb-2 mt-4 text-base font-semibold text-slate-900">
+      {children}
+    </h5>
+  ),
+  h6: ({ children }) => (
+    <h6 className="mb-2 mt-4 text-sm font-semibold text-slate-900">
+      {children}
+    </h6>
+  ),
+  p: ({ children }) => <p className="mb-4 leading-7">{children}</p>,
+  ul: ({ children }) => (
+    <ul className="mb-5 list-disc space-y-1 pl-7">{children}</ul>
+  ),
+  ol: ({ children }) => (
+    <ol className="mb-5 list-decimal space-y-1 pl-7">{children}</ol>
+  ),
+  li: ({ children }) => <li className="pl-1">{children}</li>,
+  blockquote: ({ children }) => (
+    <blockquote className="my-5 border-l-4 border-cyan-500 bg-slate-100 py-2 pl-4 text-slate-600">
+      {children}
+    </blockquote>
+  ),
+  a: ({ children, href }) => (
+    <a
+      href={href}
+      className="text-cyan-700 underline decoration-cyan-300 underline-offset-2"
+      target="_blank"
+      rel="noreferrer"
+    >
+      {children}
+    </a>
+  ),
+  strong: ({ children }) => (
+    <strong className="font-bold text-slate-900">{children}</strong>
+  ),
+  del: ({ children }) => <del className="text-slate-500">{children}</del>,
+  code: ({ children, className }) => (
+    <code
+      className={`${className ?? ""} rounded bg-slate-200 px-1.5 py-0.5 font-mono text-[0.9em] text-slate-800`}
+    >
+      {children}
+    </code>
+  ),
+  pre: ({ children }) => (
+    <pre className="mb-5 overflow-x-auto rounded-lg bg-slate-900 p-4 font-mono text-sm leading-6 text-slate-100 [&_code]:bg-transparent [&_code]:p-0 [&_code]:text-inherit">
+      {children}
+    </pre>
+  ),
+  table: ({ children }) => (
+    <div className="mb-5 overflow-x-auto">
+      <table className="w-full border-collapse text-left text-sm">
+        {children}
+      </table>
+    </div>
+  ),
+  thead: ({ children }) => (
+    <thead className="bg-cyan-50 text-slate-900">{children}</thead>
+  ),
+  th: ({ children }) => (
+    <th className="border border-slate-300 px-3 py-2 font-semibold">
+      {children}
+    </th>
+  ),
+  td: ({ children }) => (
+    <td className="border border-slate-300 px-3 py-2 align-top">
+      {children}
+    </td>
+  ),
+  hr: () => <hr className="my-7 border-slate-300" />,
+};
+
 const detectFormat = (filename: string): Format | null => {
   const extension = filename.toLowerCase().split(".").pop();
 
   return validFormats.includes(extension as Format)
     ? extension as Format
     : null;
+};
+
+const markdownOutputFilename = (filename: string, format: Format): string => {
+  if (format === "docx") return markdownFilename(filename);
+  if (format === "pdf") return pdfMarkdownFilename(filename);
+  if (format === "pptx") return powerpointMarkdownFilename(filename);
+  return `${filename.replace(/\.[^.]+$/, "")}.md`;
 };
 
 export default function DocumentConverter({
@@ -79,6 +173,7 @@ export default function DocumentConverter({
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [previewOpen, setPreviewOpen] = useState(false);
+  const [previewMode, setPreviewMode] = useState<"rendered" | "source">("rendered");
 
   const preferredInput = searchParams.get("from") ?? initialInputFormat;
   const preferredOutput = searchParams.get("to") ?? initialOutputFormat;
@@ -233,20 +328,6 @@ export default function DocumentConverter({
 
   const handleDownload = () => {
     if (!result || !file || !inputFormat || !outputFormat) return;
-
-    if (inputFormat === "md") {
-      if (!generatedFile) return;
-
-      if (outputFormat === "docx") {
-        downloadWordFile(generatedFile, file.name);
-      } else if (outputFormat === "pdf") {
-        downloadConvertedFile(generatedFile, file.name, ".pdf");
-      } else if (outputFormat === "pptx") {
-        downloadConvertedFile(generatedFile, file.name, ".pptx");
-      }
-
-      return;
-    }
 
     let filename = file.name.replace(/\.[^.]+$/, ".md");
 
@@ -503,11 +584,13 @@ export default function DocumentConverter({
                 <div className="flex flex-wrap gap-2">
                   <button
                     type="button"
-                    onClick={() => setPreviewOpen(true)}
+                    onClick={() => {
+                      setPreviewMode("source");
+                      setPreviewOpen(true);
+                    }}
                     className="flex items-center justify-center gap-2 rounded-lg border border-cyan-400/30 bg-cyan-400/10 px-4 py-2.5 text-sm font-semibold text-cyan-300 transition hover:border-cyan-400 hover:bg-cyan-400/20"
                   >
-                    <Eye size={17} />
-                    Preview
+                    <Eye size={17} /> Preview
                   </button>
 
                   <button
@@ -533,9 +616,7 @@ export default function DocumentConverter({
 
       {/* FULL SCREEN PREVIEW */}
       {previewOpen && result && (
-        <div className="fixed inset-0 z-[99999] flex h-screen w-screen flex-col bg-[#070b14]">
-
-          {/* HEADER */}
+        <div className="fixed inset-0 z-[100] flex h-screen w-screen flex-col bg-[#070b14]">
           <div className="flex shrink-0 items-center justify-between border-b border-white/10 bg-[#111c2d] px-5 py-4 sm:px-8">
             <div className="flex min-w-0 items-center gap-3">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-cyan-400/10 text-cyan-400">
@@ -543,37 +624,30 @@ export default function DocumentConverter({
               </div>
 
               <div className="min-w-0">
-                <h2 className="font-semibold text-white">
-                  Document Preview
-                </h2>
-                <p className="truncate text-xs text-slate-400">
-                  {file?.name}
-                </p>
+                <h2 className="font-semibold text-white">Document Preview</h2>
+                <p className="truncate text-xs text-slate-400">{file?.name}</p>
               </div>
             </div>
-
             <button
               type="button"
-              onClick={closePreview}
+              onClick={() => setPreviewOpen(false)}
               aria-label="Close preview"
-              title="Close preview"
-              className="ml-4 flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-red-400/40 bg-red-500/20 text-red-400 shadow-lg shadow-red-950/30 transition-all duration-200 hover:scale-110 hover:border-red-400 hover:bg-red-500 hover:text-white focus:outline-none focus:ring-2 focus:ring-red-400 focus:ring-offset-2 focus:ring-offset-[#111c2d]"
+              className="rounded-lg border border-white/10 p-2 text-slate-400 transition hover:border-red-400/30 hover:bg-red-400/10 hover:text-red-400"
             >
-              <X size={25} strokeWidth={2.8} />
+              <X size={20} />
             </button>
           </div>
 
-          {/* PREVIEW TOOLBAR */}
           <div className="flex shrink-0 items-center justify-between border-b border-white/5 px-5 py-3 sm:px-8">
             <div className="flex items-center gap-2 text-xs text-slate-400">
               <span className="h-2 w-2 rounded-full bg-emerald-400" />
               Preview ready
             </div>
-
             <div className="flex items-center gap-2 text-xs font-medium text-cyan-400">
               <Maximize2 size={14} />
               Full Screen Preview
             </div>
+            <span className="text-xs text-slate-500">The download is the .md source file</span>
           </div>
 
           {/* PREVIEW CONTENT */}
@@ -585,18 +659,15 @@ export default function DocumentConverter({
                     eSparks Document Conversion
                   </p>
                   <p className="mt-1 text-xs text-slate-400">
-                    Converted Document Content
+                    Converted Document
                   </p>
                 </div>
-
                 <span className="rounded-full bg-cyan-50 px-3 py-1 text-xs font-semibold text-cyan-700">
-                  {inputFormat === "md"
-                    ? extensions[outputFormat as Format]
-                    : ".md"}
+                  {extensions[outputFormat as Format]}
                 </span>
               </div>
 
-              <article className="wrap-break-word font-serif text-sm leading-8 text-slate-700">
+              <article className="break-words font-serif text-sm leading-8 text-slate-700">
                 {result.split("\n").map((line, index) => {
                   const heading = line.match(/^(#{1,6})\s+(.+)$/);
                   const listItem = line.match(/^\s*[-*+]\s+(.+)$/);
@@ -604,13 +675,11 @@ export default function DocumentConverter({
 
                   if (heading) {
                     const level = heading[1].length;
-
-                    const headingClass =
-                      level === 1
-                        ? "mt-8 mb-4 text-3xl font-bold text-slate-900"
-                        : level === 2
-                        ? "mt-7 mb-3 text-2xl font-bold text-slate-900"
-                        : "mt-5 mb-2 text-lg font-bold text-slate-900";
+                    const headingClass = level === 1
+                      ? "mt-8 mb-4 text-3xl font-bold text-slate-900"
+                      : level === 2
+                      ? "mt-7 mb-3 text-2xl font-bold text-slate-900"
+                      : "mt-5 mb-2 text-lg font-bold text-slate-900";
 
                     return (
                       <div key={index} className={headingClass}>
@@ -627,15 +696,9 @@ export default function DocumentConverter({
                     );
                   }
 
-                  if (!line.trim()) {
-                    return <div key={index} className="h-3" />;
-                  }
+                  if (!line.trim()) return <div key={index} className="h-3" />;
 
-                  return (
-                    <p key={index} className="mb-2">
-                      {line}
-                    </p>
-                  );
+                  return <p key={index} className="mb-2">{line}</p>;
                 })}
               </article>
 
@@ -645,31 +708,18 @@ export default function DocumentConverter({
             </div>
           </div>
 
-          {/* FOOTER */}
-          <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-white/10 bg-[#111c2d] px-5 py-4 sm:px-8">
+          <div className="flex shrink-0 items-center justify-between gap-3 border-t border-white/10 bg-[#111c2d] px-5 py-4 sm:px-8">
             <span className="text-xs text-slate-400">
               eSparks Document Conversion · Preview
             </span>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <button
-                type="button"
-                onClick={closePreview}
-                className="flex items-center justify-center gap-2 rounded-lg border border-red-400/30 bg-red-500/10 px-4 py-2.5 text-sm font-semibold text-red-400 transition hover:bg-red-500 hover:text-white"
-              >
-                <X size={17} />
-                Close Preview
-              </button>
-
-              <button
-                type="button"
-                onClick={handleDownload}
-                className="flex items-center justify-center gap-2 rounded-lg bg-cyan-400 px-5 py-2.5 text-sm font-bold text-slate-950 transition hover:bg-cyan-300"
-              >
-                <Download size={17} />
-                Download Document
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={handleDownload}
+              className="flex items-center justify-center gap-2 rounded-lg bg-cyan-400 px-5 py-2.5 text-sm font-bold text-slate-950 transition hover:bg-cyan-300"
+            >
+              <Download size={17} />
+              Download Document
+            </button>
           </div>
         </div>
       )}
