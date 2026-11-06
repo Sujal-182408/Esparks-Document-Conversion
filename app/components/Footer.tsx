@@ -21,7 +21,7 @@ const formats = [
 
 export default function Footer() {
   return (
-    <footer className="border-t border-white/10 bg-[#050912]">
+  <footer className="mt-auto w-full shrink-0 border-t border-white/10 bg-[#050912]">
       <div className="container-main py-6 sm:py-8 lg:py-10">
         <div className="grid grid-cols-1 gap-10 sm:grid-cols-2 sm:gap-x-8 sm:gap-y-10 lg:grid-cols-[minmax(0,1.3fr)_minmax(10rem,0.7fr)_minmax(14rem,1fr)] lg:gap-12">
           <div className="min-w-0">
