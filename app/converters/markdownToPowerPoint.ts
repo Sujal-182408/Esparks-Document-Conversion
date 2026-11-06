@@ -179,7 +179,8 @@ function splitRuns(runs: TextRun[], maxCharacters: number): TextRun[][] {
 }
 
 export async function convertMarkdownToPowerPoint(
-  markdown: string
+  markdown: string,
+  fontSize = 14
 ): Promise<Blob> {
   if (!markdown.trim()) {
     throw new Error("The Markdown file is empty.");
@@ -228,7 +229,7 @@ export async function convertMarkdownToPowerPoint(
       w: 11.9,
       h: 0.74,
       fontFace: "Arial",
-      fontSize: 28,
+      fontSize: fontSize * (28 / 17),
       bold: true,
       color: "000000",
       fit: "shrink",
@@ -274,7 +275,7 @@ export async function convertMarkdownToPowerPoint(
 
     if (slideNumber === 0) addSlide("Markdown Presentation");
 
-    const fontSize = options.fontSize ?? 17;
+    const textFontSize = options.fontSize ?? fontSize;
     const chunks = splitRuns(runs, 420);
 
     for (const chunk of chunks) {
@@ -286,7 +287,7 @@ export async function convertMarkdownToPowerPoint(
           0
         )
       );
-      const height = Math.min(lineCount * (fontSize / 72) * 1.45 + 0.12, 2.4);
+      const height = Math.min(lineCount * (textFontSize / 72) * 1.45 + 0.12, 2.4);
       const indent = (options.bulletLevel ?? 0) * 0.28;
 
       if (y + height > CONTENT_BOTTOM && hasContent) {
@@ -310,7 +311,7 @@ export async function convertMarkdownToPowerPoint(
         w: BODY_WIDTH - indent - (options.quote ? 0.18 : 0),
         h: height,
         fontFace: options.fontFace ?? "Arial",
-        fontSize,
+        fontSize: textFontSize,
         color: "000000",
         bold: options.bold,
         italic: options.italic,
@@ -320,7 +321,7 @@ export async function convertMarkdownToPowerPoint(
         margin: 0.04,
         paraSpaceAfter: 6,
         bullet: options.bulletLevel !== undefined
-          ? { indent: fontSize * 1.05 }
+          ? { indent: textFontSize * 1.05 }
           : undefined,
       });
       y += height + 0.14;
@@ -539,7 +540,7 @@ export async function convertMarkdownToPowerPoint(
         rowH: pageRowHeights,
         border: { type: "solid", color: "888888", pt: 0.7 },
         fontFace: "Arial",
-        fontSize: 12,
+        fontSize,
         margin: 0.08,
         color: "000000",
       });
@@ -560,7 +561,7 @@ export async function convertMarkdownToPowerPoint(
           addSlide(token.text);
         } else {
           addRichContent(inlineRuns(token.tokens ?? []), {
-            fontSize: token.depth === 3 ? 21 : 18,
+            fontSize: fontSize * (token.depth === 3 ? 21 : 18) / 17,
             bold: true,
             color: "000000",
           });
@@ -591,7 +592,7 @@ export async function convertMarkdownToPowerPoint(
       case "code":
         addRichContent([{ text: token.text, options: { breakLine: false } }], {
           fontFace: "Courier New",
-          fontSize: 13,
+          fontSize,
           color: "000000",
         });
         break;

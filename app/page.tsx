@@ -75,7 +75,7 @@ function HomeContent() {
     : undefined;
 
   return (
-    <main className="min-h-screen overflow-hidden bg-[#070b14] text-white">
+    <main className="min-h-screen overflow-x-clip bg-[#070b14] text-white">
       <Navbar />
 
       {selected ? (

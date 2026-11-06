@@ -18,7 +18,8 @@ type Html2PdfWorker = {
 type Html2PdfFactory = () => Html2PdfWorker;
 
 export async function convertMarkdownToPdf(
-  markdown: string
+  markdown: string,
+  fontSize = 14
 ): Promise<Blob> {
   if (!markdown.trim()) {
     throw new Error("The Markdown file is empty.");
@@ -39,7 +40,7 @@ export async function convertMarkdownToPdf(
     "background:#ffffff",
     "color:#222222",
     "font-family:Arial,Helvetica,sans-serif",
-    "font-size:14px",
+    `font-size:${fontSize}pt`,
     "line-height:1.65",
     "overflow-wrap:break-word",
     "pointer-events:none",
@@ -55,10 +56,10 @@ export async function convertMarkdownToPdf(
         margin: 1.4em 0 0.55em;
         page-break-after: avoid;
       }
-      h1 { font-size: 30px; border-bottom: 2px solid #888888; padding-bottom: 10px; }
-      h2 { font-size: 24px; }
-      h3 { font-size: 20px; }
-      h4, h5, h6 { font-size: 17px; }
+      h1 { font-size: ${fontSize * (30 / 14)}pt; border-bottom: 2px solid #888888; padding-bottom: 10px; }
+      h2 { font-size: ${fontSize * (24 / 14)}pt; }
+      h3 { font-size: ${fontSize * (20 / 14)}pt; }
+      h4, h5, h6 { font-size: ${fontSize * (17 / 14)}pt; }
       p, ul, ol { margin: 0 0 14px; }
       ul, ol { padding-left: 26px; }
       li { margin: 0 0 5px; page-break-inside: avoid; break-inside: avoid; }

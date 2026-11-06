@@ -5,7 +5,8 @@ import { useRef, useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   Upload, FileText, Download, RefreshCw, X,
-  CheckCircle2, AlertCircle, ChevronDown, Eye
+  CheckCircle2, AlertCircle, ChevronDown, Eye, Maximize2, Minimize2,
+  Minus, Plus
 } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -53,34 +54,34 @@ const extensions: Record<Format, string> = {
   md: ".md"
 };
 
-const markdownPreviewComponents: Components = {
+const markdownPreviewComponents = (fontSize: number): Components => ({
   h1: ({ children }) => (
-    <h1 className="mb-5 mt-8 border-b border-slate-200 pb-3 text-3xl font-bold text-slate-900 first:mt-0">
+    <h1 style={{ fontSize: `${fontSize * (30 / 14)}pt` }} className="mb-5 mt-8 border-b border-slate-200 pb-3 font-bold text-slate-900 first:mt-0">
       {children}
     </h1>
   ),
   h2: ({ children }) => (
-    <h2 className="mb-4 mt-7 text-2xl font-bold text-slate-900">
+    <h2 style={{ fontSize: `${fontSize * (24 / 14)}pt` }} className="mb-4 mt-7 font-bold text-slate-900">
       {children}
     </h2>
   ),
   h3: ({ children }) => (
-    <h3 className="mb-3 mt-6 text-xl font-semibold text-slate-900">
+    <h3 style={{ fontSize: `${fontSize * (20 / 14)}pt` }} className="mb-3 mt-6 font-semibold text-slate-900">
       {children}
     </h3>
   ),
   h4: ({ children }) => (
-    <h4 className="mb-3 mt-5 text-lg font-semibold text-slate-900">
+    <h4 style={{ fontSize: `${fontSize * (17 / 14)}pt` }} className="mb-3 mt-5 font-semibold text-slate-900">
       {children}
     </h4>
   ),
   h5: ({ children }) => (
-    <h5 className="mb-2 mt-4 text-base font-semibold text-slate-900">
+    <h5 style={{ fontSize: `${fontSize * (17 / 14)}pt` }} className="mb-2 mt-4 font-semibold text-slate-900">
       {children}
     </h5>
   ),
   h6: ({ children }) => (
-    <h6 className="mb-2 mt-4 text-sm font-semibold text-slate-900">
+    <h6 style={{ fontSize: `${fontSize * (17 / 14)}pt` }} className="mb-2 mt-4 font-semibold text-slate-900">
       {children}
     </h6>
   ),
@@ -119,13 +120,13 @@ const markdownPreviewComponents: Components = {
     </code>
   ),
   pre: ({ children }) => (
-    <pre className="mb-5 overflow-x-auto rounded-lg bg-slate-900 p-4 font-mono text-sm leading-6 text-slate-100 [&_code]:bg-transparent [&_code]:p-0 [&_code]:text-inherit">
+    <pre style={{ fontSize: `${fontSize}pt` }} className="mb-5 overflow-x-auto rounded-lg bg-slate-900 p-4 font-mono leading-6 text-slate-100 [&_code]:bg-transparent [&_code]:p-0 [&_code]:text-inherit">
       {children}
     </pre>
   ),
   table: ({ children }) => (
     <div className="mb-5 overflow-x-auto">
-      <table className="w-full border-collapse text-left text-sm">
+      <table style={{ fontSize: `${fontSize}pt` }} className="w-full border-collapse text-left">
         {children}
       </table>
     </div>
@@ -144,7 +145,7 @@ const markdownPreviewComponents: Components = {
     </td>
   ),
   hr: () => <hr className="my-7 border-slate-300" />,
-};
+});
 
 const detectFormat = (filename: string): Format | null => {
   const extension = filename.toLowerCase().split(".").pop();
@@ -161,16 +162,93 @@ const markdownOutputFilename = (filename: string, format: Format): string => {
   return `${filename.replace(/\.[^.]+$/, "")}.md`;
 };
 
+async function createMarkdownOutput(
+  markdown: string,
+  format: Format,
+  fontSize: number
+): Promise<GeneratedDocument> {
+  if (format === "docx") {
+    return {
+      blob: await convertMarkdownToWord(markdown, fontSize),
+      format: "docx",
+    };
+  }
+  if (format === "pdf") {
+    return {
+      blob: await convertMarkdownToPdf(markdown, fontSize),
+      format: "pdf",
+    };
+  }
+  if (format === "pptx") {
+    return {
+      blob: await convertMarkdownToPowerPoint(markdown, fontSize),
+      format: "pptx",
+    };
+  }
+  throw new Error("Select a document format to convert the Markdown file.");
+}
+
+async function extractMarkdown(file: File, format: Format): Promise<string> {
+  if (format === "md") return file.text();
+  if (format === "docx") return wordToMarkdown(file);
+  if (format === "pdf") return pdfToMarkdown(file);
+  if (format === "pptx") return convertPowerPointToMarkdown(file);
+  throw new Error("This input format is not supported.");
+}
+
+const formatFileSize = (size: number): string =>
+  size < 1024
+    ? `${size} B`
+    : size < 1024 * 1024
+    ? `${(size / 1024).toFixed(1)} KB`
+    : `${(size / 1024 / 1024).toFixed(2)} MB`;
+
 export default function DocumentConverter({
   initialInputFormat,
   initialOutputFormat
 }: DocumentConverterProps = {}) {
   const searchParams = useSearchParams();
+  const preferredInput = searchParams.get("from") ?? initialInputFormat;
+  const preferredOutput = searchParams.get("to") ?? initialOutputFormat;
+  const validInput = validFormats.includes(preferredInput as Format)
+    ? preferredInput as Format
+    : null;
+  const validOutput = validFormats.includes(preferredOutput as Format)
+    ? preferredOutput as Format
+    : null;
+  const selectedOutput =
+    validInput && validOutput && conversionOptions[validInput].includes(validOutput)
+      ? validOutput
+      : validInput
+        ? conversionOptions[validInput][0]
+        : undefined;
+
+  return (
+    <DocumentConverterContent
+      key={JSON.stringify([preferredInput, preferredOutput])}
+      initialInputFormat={validInput ?? undefined}
+      initialOutputFormat={selectedOutput}
+    />
+  );
+}
+
+function DocumentConverterContent({
+  initialInputFormat,
+  initialOutputFormat
+}: DocumentConverterProps) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const fileReadIdRef = useRef(0);
 
   const [file, setFile] = useState<File | null>(null);
-  const [inputFormat, setInputFormat] = useState<Format | null>(null);
-  const [outputFormat, setOutputFormat] = useState<Format | "">("");
+  const [inputFormat, setInputFormat] = useState<Format | null>(
+    initialInputFormat ?? null
+  );
+  const [outputFormat, setOutputFormat] = useState<Format | "">(
+    initialOutputFormat ?? ""
+  );
+  const [previewMarkdown, setPreviewMarkdown] = useState<string | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [fontSize, setFontSize] = useState(14);
   const [result, setResult] = useState("");
   const [generatedFile, setGeneratedFile] = useState<GeneratedDocument | null>(null);
   const [busy, setBusy] = useState(false);
@@ -179,53 +257,24 @@ export default function DocumentConverter({
   const [success, setSuccess] = useState("");
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewMode, setPreviewMode] = useState<"rendered" | "source">("rendered");
-
-  const preferredInput = searchParams.get("from") ?? initialInputFormat;
-  const preferredOutput = searchParams.get("to") ?? initialOutputFormat;
-
-  useEffect(() => {
-    const validInput = validFormats.includes(preferredInput as Format)
-      ? preferredInput as Format
-      : null;
-
-    const validOutput = validFormats.includes(preferredOutput as Format)
-      ? preferredOutput as Format
-      : null;
-
-    if (!validInput) {
-      setInputFormat(null);
-      setOutputFormat("");
-      return;
-    }
-
-    setInputFormat(validInput);
-
-    const selectedOutput =
-      validOutput && conversionOptions[validInput].includes(validOutput)
-        ? validOutput
-        : conversionOptions[validInput][0];
-
-    setOutputFormat(selectedOutput || "");
-    setFile(null);
-    setResult("");
-    setGeneratedFile(null);
-    setSuccess("");
-    setError("");
-    setPreviewOpen(false);
-
-    if (fileRef.current) fileRef.current.value = "";
-  }, [preferredInput, preferredOutput]);
+  const [previewFullscreen, setPreviewFullscreen] = useState(false);
+  const [outputPreviewFullscreen, setOutputPreviewFullscreen] = useState(false);
 
   const outputOptions = inputFormat
     ? conversionOptions[inputFormat]
     : [];
 
   const selectFile = (selectedFile?: File) => {
+    const readId = ++fileReadIdRef.current;
     setError("");
     setSuccess("");
     setResult("");
+    setPreviewMarkdown(null);
+    setPreviewLoading(false);
     setGeneratedFile(null);
     setPreviewOpen(false);
+    setPreviewFullscreen(false);
+    setOutputPreviewFullscreen(false);
 
     if (!selectedFile) return;
 
@@ -246,15 +295,28 @@ export default function DocumentConverter({
       return;
     }
 
-    if (inputFormat && detectedFormat !== inputFormat) {
+    if (initialInputFormat && detectedFormat !== initialInputFormat) {
       setError(
-        `Please upload a ${formatNames[inputFormat]} (${extensions[inputFormat]}) file.`
+        `Please upload a ${formatNames[initialInputFormat]} (${extensions[initialInputFormat]}) file.`
       );
       return;
     }
 
     setFile(selectedFile);
     setInputFormat(detectedFormat);
+    setPreviewLoading(true);
+    extractMarkdown(selectedFile, detectedFormat).then((markdown) => {
+      if (readId === fileReadIdRef.current) setPreviewMarkdown(markdown);
+    }).catch((readError: unknown) => {
+      if (readId !== fileReadIdRef.current) return;
+      setError(
+        readError instanceof Error
+          ? `Could not prepare the preview: ${readError.message}`
+          : "Could not prepare the preview."
+      );
+    }).finally(() => {
+      if (readId === fileReadIdRef.current) setPreviewLoading(false);
+    });
 
     setOutputFormat((currentOutput) =>
       currentOutput && conversionOptions[detectedFormat].includes(currentOutput)
@@ -280,37 +342,18 @@ export default function DocumentConverter({
     setResult("");
     setGeneratedFile(null);
     setPreviewOpen(false);
+    setPreviewFullscreen(false);
 
     try {
-      if (inputFormat === "docx" && outputFormat === "md") {
-        const markdown = await wordToMarkdown(file);
-        setResult(markdown);
-      } else if (inputFormat === "pdf" && outputFormat === "md") {
-        const markdown = await pdfToMarkdown(file);
-        setResult(markdown);
-      } else if (inputFormat === "pptx" && outputFormat === "md") {
-        const markdown = await convertPowerPointToMarkdown(file);
-        setResult(markdown);
-      } else if (inputFormat === "md" && outputFormat === "docx") {
-        const markdown = await file.text();
-        const wordFile = await convertMarkdownToWord(markdown);
+      const markdown = previewMarkdown ?? await extractMarkdown(file, inputFormat);
+      setPreviewMarkdown(markdown);
+      setResult(markdown);
 
-        setResult(markdown);
-        setGeneratedFile({ blob: wordFile, format: "docx" });
-      } else if (inputFormat === "md" && outputFormat === "pdf") {
-        const markdown = await file.text();
-        const pdfFile = await convertMarkdownToPdf(markdown);
-
-        setResult(markdown);
-        setGeneratedFile({ blob: pdfFile, format: "pdf" });
-      } else if (inputFormat === "md" && outputFormat === "pptx") {
-        const markdown = await file.text();
-        const powerpointFile = await convertMarkdownToPowerPoint(markdown);
-
-        setResult(markdown);
-        setGeneratedFile({ blob: powerpointFile, format: "pptx" });
+      if (inputFormat === "md") {
+        const document = await createMarkdownOutput(markdown, outputFormat, fontSize);
+        setGeneratedFile(document);
       } else {
-        throw new Error("This conversion has not been implemented yet.");
+        setGeneratedFile(null);
       }
 
       setSuccess("Your document has been converted successfully. Preview or download it below.");
@@ -321,6 +364,48 @@ export default function DocumentConverter({
         err instanceof Error
           ? err.message
           : "Conversion failed. Please try again."
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const updateFontSize = async (nextFontSize: number) => {
+    const clampedFontSize = Math.min(32, Math.max(8, nextFontSize));
+    setFontSize(clampedFontSize);
+
+    if (
+      !generatedFile ||
+      !file ||
+      !inputFormat ||
+      !outputFormat ||
+      outputFormat === "md"
+    ) {
+      return;
+    }
+
+    setBusy(true);
+    setError("");
+    setSuccess("");
+    setGeneratedFile(null);
+
+    try {
+      const markdown = previewMarkdown ?? await extractMarkdown(file, inputFormat);
+      const converted = await createMarkdownOutput(
+        markdown,
+        outputFormat,
+        clampedFontSize
+      );
+      setResult(markdown);
+      setGeneratedFile(converted);
+      setSuccess(`Output regenerated at ${clampedFontSize} pt.`);
+    } catch (err) {
+      console.error("Font-size update error:", err);
+      setResult("");
+      setError(
+        err instanceof Error
+          ? err.message
+          : "Could not regenerate the document at the selected font size."
       );
     } finally {
       setBusy(false);
@@ -353,34 +438,51 @@ export default function DocumentConverter({
   };
 
   const reset = () => {
+    fileReadIdRef.current += 1;
     setFile(null);
+    setPreviewMarkdown(null);
+    setPreviewLoading(false);
     setResult("");
     setGeneratedFile(null);
     setError("");
     setSuccess("");
     setPreviewOpen(false);
+    setPreviewFullscreen(false);
+    setOutputPreviewFullscreen(false);
 
-    if (inputFormat) {
-      const validOutput =
-        outputFormat && conversionOptions[inputFormat].includes(outputFormat);
-
-      if (!validOutput) {
-        setOutputFormat(conversionOptions[inputFormat][0] || "");
-      }
-    }
+    setInputFormat(initialInputFormat ?? null);
+    setOutputFormat(
+      initialOutputFormat ??
+      (initialInputFormat ? conversionOptions[initialInputFormat][0] : "")
+    );
 
     if (fileRef.current) fileRef.current.value = "";
+    if (initialInputFormat) {
+      const validOutput =
+        initialOutputFormat &&
+        conversionOptions[initialInputFormat].includes(initialOutputFormat);
+
+      if (!validOutput) {
+        setOutputFormat(conversionOptions[initialInputFormat][0] || "");
+      }
+    }
   };
 
   useEffect(() => {
-    if (!previewOpen) return;
+    if (!previewOpen && !outputPreviewFullscreen) return;
 
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        setPreviewOpen(false);
+        if (previewFullscreen) {
+          setPreviewFullscreen(false);
+        } else if (previewOpen) {
+          setPreviewOpen(false);
+        } else {
+          setOutputPreviewFullscreen(false);
+        }
       }
     };
 
@@ -390,7 +492,49 @@ export default function DocumentConverter({
       document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", handleKeyDown);
     };
-  }, [previewOpen]);
+  }, [previewOpen, previewFullscreen, outputPreviewFullscreen]);
+
+  const renderMarkdown = (markdown: string) => (
+    <article
+      style={{ fontSize: `${fontSize}pt` }}
+      className="break-words font-sans leading-relaxed text-slate-700"
+    >
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={markdownPreviewComponents(fontSize)}
+      >
+        {markdown}
+      </ReactMarkdown>
+    </article>
+  );
+
+  const renderFontSizeControls = () => (
+    <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1 text-slate-700">
+      <button
+        type="button"
+        onClick={() => void updateFontSize(fontSize - 1)}
+        disabled={fontSize <= 8 || busy}
+        aria-label="Decrease font size"
+        title="Decrease font size"
+        className="rounded p-1 transition hover:bg-slate-100 disabled:opacity-40"
+      >
+        <Minus size={15} />
+      </button>
+      <span className="min-w-14 text-center text-xs font-semibold" aria-live="polite">
+        {fontSize} pt
+      </span>
+      <button
+        type="button"
+        onClick={() => void updateFontSize(fontSize + 1)}
+        disabled={fontSize >= 32 || busy}
+        aria-label="Increase font size"
+        title="Increase font size"
+        className="rounded p-1 transition hover:bg-slate-100 disabled:opacity-40"
+      >
+        <Plus size={15} />
+      </button>
+    </div>
+  );
 
   return (
     <section id="converter" className="w-full">
@@ -459,7 +603,7 @@ export default function DocumentConverter({
 
                   <p className="mt-1 text-xs text-slate-400">
                     {formatNames[inputFormat!]} ·{" "}
-                    {(file.size / 1024 / 1024).toFixed(2)} MB
+                    {formatFileSize(file.size)}
                   </p>
                 </div>
 
@@ -473,6 +617,49 @@ export default function DocumentConverter({
                   <X size={19} />
                 </button>
               </div>
+            )}
+
+            {file && previewMarkdown !== null && (
+              <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                <div className="min-w-0 rounded-lg border border-white/10 bg-slate-950/50 p-3 sm:col-span-2">
+                  <p className="text-[11px] uppercase tracking-wide text-slate-500">
+                    Loaded file
+                  </p>
+                  <p className="mt-1 truncate text-sm font-medium text-slate-200" title={file.name}>
+                    {file.name}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-white/10 bg-slate-950/50 p-3">
+                  <p className="text-[11px] uppercase tracking-wide text-slate-500">
+                    File size
+                  </p>
+                  <p className="mt-1 text-sm font-medium text-slate-200">
+                    {formatFileSize(file.size)}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-white/10 bg-slate-950/50 p-3">
+                  <p className="text-[11px] uppercase tracking-wide text-slate-500">
+                    Text characters
+                  </p>
+                  <p className="mt-1 text-sm font-medium text-slate-200">
+                    {Array.from(previewMarkdown).length.toLocaleString()}
+                  </p>
+                </div>
+                <div className="rounded-lg border border-white/10 bg-slate-950/50 p-3">
+                  <p className="text-[11px] uppercase tracking-wide text-slate-500">
+                    Lines
+                  </p>
+                  <p className="mt-1 text-sm font-medium text-slate-200">
+                    {previewMarkdown.split(/\r\n|\r|\n/).length.toLocaleString()}
+                  </p>
+                </div>
+              </div>
+            )}
+            {file && previewLoading && (
+              <p className="mt-3 flex items-center gap-2 text-xs text-cyan-300" role="status">
+                <RefreshCw size={14} className="animate-spin" />
+                Preparing file preview and text information...
+              </p>
             )}
           </div>
 
@@ -508,6 +695,7 @@ export default function DocumentConverter({
                   setSuccess("");
                   setError("");
                   setPreviewOpen(false);
+                  setOutputPreviewFullscreen(false);
                 }}
                 disabled={!inputFormat || busy || outputOptions.length === 0}
                 className="w-full appearance-none rounded-xl border border-white/10 bg-slate-950 px-4 py-3.5 pr-12 text-sm text-white outline-none transition focus:border-cyan-400 disabled:cursor-not-allowed disabled:opacity-50"
@@ -541,6 +729,78 @@ export default function DocumentConverter({
             )}
           </div>
 
+          {file && inputFormat && outputFormat && previewMarkdown !== null && (
+            <section
+              aria-label="Source and output preview"
+              className={`mb-6 ${outputPreviewFullscreen ? "fixed inset-0 z-[90] flex h-dvh flex-col overflow-hidden bg-[#070b14] p-3 sm:p-5" : ""}`}
+            >
+              <div className={`grid gap-4 ${outputPreviewFullscreen ? "min-h-0 flex-1 lg:grid-cols-2" : "lg:grid-cols-2"}`}>
+                <div className={`flex min-w-0 flex-col overflow-hidden rounded-xl border border-white/10 bg-slate-950/60 ${outputPreviewFullscreen ? "min-h-0" : ""}`}>
+                  <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+                    <div>
+                      <h3 className="text-sm font-semibold text-white">
+                        {inputFormat === "md" ? "Markdown source" : "Extracted content"}
+                      </h3>
+                      <p className="mt-1 text-xs text-slate-500">{file.name}</p>
+                    </div>
+                    <span className="rounded-md bg-white/5 px-2 py-1 text-[11px] font-semibold text-slate-400">
+                      {extensions[inputFormat]}
+                    </span>
+                  </div>
+                  <pre
+                    style={{ fontSize: `${fontSize}pt` }}
+                    className={`overflow-auto whitespace-pre-wrap break-words p-4 font-mono leading-relaxed text-slate-300 ${outputPreviewFullscreen ? "min-h-0 flex-1" : "max-h-[34rem]"}`}
+                  >
+                    {previewMarkdown}
+                  </pre>
+                </div>
+
+                <div
+                  className="relative flex min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border border-cyan-400/20 bg-[#111c2d]"
+                >
+                  <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+                    <div>
+                      <h3 className="text-sm font-semibold text-white">
+                        {formatNames[outputFormat]} preview
+                      </h3>
+                      <p className="mt-1 text-xs text-slate-400">
+                        {extensions[outputFormat]} · {outputFormat === "md" ? "Font size adjusts this preview only" : "Font size is applied to the downloaded file"}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {renderFontSizeControls()}
+                      <button
+                        type="button"
+                        onClick={() => setOutputPreviewFullscreen((current) => !current)}
+                        aria-label={outputPreviewFullscreen ? "Exit full screen output preview" : "View output preview full screen"}
+                        title={outputPreviewFullscreen ? "Exit full screen" : "Full screen"}
+                        className="rounded-lg border border-white/10 p-2 text-slate-300 transition hover:border-cyan-400/50 hover:text-cyan-300"
+                      >
+                        {outputPreviewFullscreen ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
+                      </button>
+                    </div>
+                  </div>
+                  <div className={`min-h-0 flex-1 overflow-auto bg-[#080d17] p-3 sm:p-5 ${outputPreviewFullscreen ? "" : "max-h-[38rem]"}`}>
+                    {outputFormat === "md" ? (
+                      <div className="mx-auto min-h-64 max-w-3xl overflow-auto rounded-lg border border-slate-200 bg-white px-6 py-8 shadow-xl sm:px-10 sm:py-12">
+                        {renderMarkdown(previewMarkdown)}
+                      </div>
+                    ) : outputFormat === "pptx" ? (
+                      <div className="mx-auto min-h-64 max-w-4xl overflow-auto rounded-lg border border-slate-300 bg-white p-5 shadow-xl sm:p-8">
+                        <div className="mb-5 h-1.5 rounded-full bg-slate-500" />
+                        {renderMarkdown(previewMarkdown)}
+                      </div>
+                    ) : (
+                      <div className="mx-auto min-h-64 max-w-3xl overflow-auto rounded-lg border border-slate-200 bg-white px-6 py-8 shadow-xl sm:px-10 sm:py-12">
+                        {renderMarkdown(previewMarkdown)}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </section>
+          )}
+
           {/* ERROR */}
           {error && (
             <div className="mb-5 flex items-start gap-2 rounded-lg border border-red-500/20 bg-red-500/10 p-3 text-sm text-red-300">
@@ -561,7 +821,7 @@ export default function DocumentConverter({
           <button
             type="button"
             onClick={handleConvert}
-            disabled={!file || !outputFormat || busy || outputOptions.length === 0}
+            disabled={!file || !outputFormat || busy || previewLoading || outputOptions.length === 0}
             className="flex w-full items-center justify-center gap-2 rounded-xl bg-cyan-400 px-6 py-4 text-sm font-bold text-slate-950 transition-all hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {busy ? (
@@ -600,6 +860,7 @@ export default function DocumentConverter({
                     type="button"
                     onClick={() => {
                       setPreviewMode("source");
+                      setPreviewFullscreen(false);
                       setPreviewOpen(true);
                     }}
                     className="flex items-center justify-center gap-2 rounded-lg border border-cyan-400/30 bg-cyan-400/10 px-4 py-2.5 text-sm font-semibold text-cyan-300 transition hover:border-cyan-400 hover:bg-cyan-400/20"
@@ -610,7 +871,8 @@ export default function DocumentConverter({
                   <button
                     type="button"
                     onClick={handleDownload}
-                    className="flex items-center justify-center gap-2 rounded-lg bg-cyan-400 px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300"
+                    disabled={busy || (inputFormat === "md" && !generatedFile)}
+                    className="flex items-center justify-center gap-2 rounded-lg bg-cyan-400 px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <Download size={17} />
                     Download
@@ -630,7 +892,8 @@ export default function DocumentConverter({
 
       {/* FULL SCREEN PREVIEW */}
       {previewOpen && result && (
-        <div className="fixed inset-0 z-[100] flex h-screen w-screen flex-col bg-[#070b14]">
+        <div className={`fixed inset-0 z-[100] flex items-center justify-center bg-black/80 ${previewFullscreen ? "p-0" : "p-3 sm:p-8"}`}>
+        <div className={`flex h-full w-full flex-col overflow-hidden bg-[#070b14] ${previewFullscreen ? "max-w-none rounded-none" : "max-h-[92vh] max-w-6xl rounded-xl border border-white/10 shadow-2xl"}`}>
           <div className="flex shrink-0 items-center justify-between border-b border-white/10 bg-[#111c2d] px-5 py-4 sm:px-8">
             <div className="flex min-w-0 items-center gap-3">
               <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-cyan-400/10 text-cyan-400">
@@ -646,14 +909,26 @@ export default function DocumentConverter({
                 </p>
               </div>
             </div>
-            <button
-              type="button"
-              onClick={() => setPreviewOpen(false)}
-              aria-label="Close preview"
-              className="rounded-lg border border-white/10 p-2 text-slate-400 transition hover:border-red-400/30 hover:bg-red-400/10 hover:text-red-400"
-            >
-              <X size={20} />
-            </button>
+            <div className="flex items-center gap-2">
+              {renderFontSizeControls()}
+              <button
+                type="button"
+                onClick={() => setPreviewFullscreen((current) => !current)}
+                aria-label={previewFullscreen ? "Exit full screen preview" : "View preview full screen"}
+                title={previewFullscreen ? "Exit full screen" : "Full screen"}
+                className="rounded-lg border border-white/10 p-2 text-slate-300 transition hover:border-cyan-400/50 hover:text-cyan-300"
+              >
+                {previewFullscreen ? <Minimize2 size={18} /> : <Maximize2 size={18} />}
+              </button>
+              <button
+                type="button"
+                onClick={() => setPreviewOpen(false)}
+                aria-label="Close preview"
+                className="rounded-lg border border-white/10 p-2 text-slate-400 transition hover:border-red-400/30 hover:bg-red-400/10 hover:text-red-400"
+              >
+                <X size={20} />
+              </button>
+            </div>
           </div>
 
           {outputFormat === "md" && (
@@ -694,30 +969,14 @@ export default function DocumentConverter({
             <div className="mx-auto min-h-full w-full max-w-5xl rounded-xl border border-slate-200/10 bg-[#f8fafc] px-6 py-8 text-slate-800 shadow-2xl sm:px-12 sm:py-12">
               {outputFormat === "md" ? (
                 previewMode === "source" ? (
-                  <pre className="whitespace-pre-wrap break-words font-mono text-sm leading-7 text-slate-700">
+                  <pre style={{ fontSize: `${fontSize}pt` }} className="whitespace-pre-wrap break-words font-mono leading-7 text-slate-700">
                     {result}
                   </pre>
                 ) : (
-                  <article className="break-words font-serif text-sm leading-7 text-slate-700">
-                    <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
-                      components={markdownPreviewComponents}
-                    >
-                      {result}
-                    </ReactMarkdown>
-                  </article>
+                  renderMarkdown(result)
                 )
               ) : (
-                <div className="flex min-h-64 flex-col items-center justify-center text-center">
-                  <FileText size={42} className="mb-4 text-cyan-600" />
-                  <h3 className="text-xl font-semibold text-slate-900">
-                    {formatNames[outputFormat as Format]} created
-                  </h3>
-                  <p className="mt-2 max-w-md text-sm text-slate-600">
-                    The converted file is ready. Download it to open the
-                    {` ${extensions[outputFormat as Format]}`} document.
-                  </p>
-                </div>
+                renderMarkdown(result)
               )}
             </div>
           </div>
@@ -732,12 +991,14 @@ export default function DocumentConverter({
             <button
               type="button"
               onClick={handleDownload}
-              className="flex items-center justify-center gap-2 rounded-lg bg-cyan-400 px-5 py-2.5 text-sm font-bold text-slate-950 transition hover:bg-cyan-300"
+              disabled={busy || (inputFormat === "md" && !generatedFile)}
+              className="flex items-center justify-center gap-2 rounded-lg bg-cyan-400 px-5 py-2.5 text-sm font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <Download size={17} />
-              Download {extensions[outputFormat as Format]}
+              {busy ? <RefreshCw size={17} className="animate-spin" /> : <Download size={17} />}
+              {busy ? "Updating..." : `Download ${extensions[outputFormat as Format]}`}
             </button>
           </div>
+        </div>
         </div>
       )}
     </section>

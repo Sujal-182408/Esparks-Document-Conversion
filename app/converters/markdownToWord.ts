@@ -359,7 +359,8 @@ function convertTokens(
 }
 
 export async function convertMarkdownToWord(
-  markdown: string
+  markdown: string,
+  fontSize = 14
 ): Promise<Blob> {
   if (!markdown.trim()) {
     throw new Error("Please enter or upload Markdown content first.");
@@ -407,33 +408,33 @@ export async function convertMarkdownToWord(
       styles: {
         default: {
           document: {
-            run: { font: "Arial", size: 22, color: "000000" },
+            run: { font: "Arial", size: fontSize * 2, color: "000000" },
             paragraph: { spacing: { after: 160, line: 276 } },
           },
           title: {
-            run: { font: "Arial", size: 36, bold: true, color: "000000" },
+            run: { font: "Arial", size: Math.round(fontSize * 2 * (36 / 22)), bold: true, color: "000000" },
             paragraph: { spacing: { before: 240, after: 240 } },
           },
           heading1: {
-            run: { font: "Arial", size: 32, bold: true, color: "000000" },
+            run: { font: "Arial", size: Math.round(fontSize * 2 * (32 / 22)), bold: true, color: "000000" },
             paragraph: { spacing: { before: 320, after: 160 }, keepNext: true },
           },
           heading2: {
-            run: { font: "Arial", size: 28, bold: true, color: "000000" },
+            run: { font: "Arial", size: Math.round(fontSize * 2 * (28 / 22)), bold: true, color: "000000" },
             paragraph: { spacing: { before: 280, after: 140 }, keepNext: true },
           },
           heading3: {
-            run: { font: "Arial", size: 24, bold: true, color: "000000" },
+            run: { font: "Arial", size: Math.round(fontSize * 2 * (24 / 22)), bold: true, color: "000000" },
             paragraph: { spacing: { before: 240, after: 120 }, keepNext: true },
           },
           heading4: {
-            run: { font: "Arial", size: 22, bold: true, color: "000000" },
+            run: { font: "Arial", size: fontSize * 2, bold: true, color: "000000" },
           },
           heading5: {
-            run: { font: "Arial", size: 22, bold: true, color: "000000" },
+            run: { font: "Arial", size: fontSize * 2, bold: true, color: "000000" },
           },
           heading6: {
-            run: { font: "Arial", size: 22, bold: true, color: "000000" },
+            run: { font: "Arial", size: fontSize * 2, bold: true, color: "000000" },
           },
           hyperlink: {
             run: { color: "000000", underline: { color: "000000" } },

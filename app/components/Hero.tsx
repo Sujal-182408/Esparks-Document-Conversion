@@ -1,21 +1,17 @@
 "use client";
 
-import Link from "next/link";
-import { ArrowRight } from "lucide-react";
 import { Suspense } from "react";
 import DocumentConverter from "./DocumentConverter";
 
 export default function Hero() {
   return (
-    <section className="relative mt-10 overflow-hidden border-b border-white/5">
+    <section className="relative overflow-hidden border-b border-white/5">
       <div className="grid-background absolute inset-0 opacity-40" />
       <div className="absolute -left-40 top-20 h-80 w-80 rounded-full bg-cyan-500/10 blur-[120px]" />
       <div className="absolute -right-40 top-20 h-80 w-80 rounded-full bg-blue-500/10 blur-[120px]" />
 
-      <div className="container-main relative grid min-h-162.5 items-center gap-12 py-16 lg:grid-cols-2 lg:gap-16 lg:py-20">
-
-        {/* LEFT SIDE - KEEP YOUR EXISTING CONTENT UNCHANGED */}
-        <div>
+      <div className="container-main relative py-12 sm:py-16 lg:py-20">
+        <div className="mx-auto w-full max-w-4xl text-center">
           <div className="mb-7 inline-flex items-center gap-2 rounded-full border border-cyan-400/20 bg-cyan-400/5 px-4 py-2">
             <span className="h-2 w-2 animate-pulse rounded-full bg-cyan-400" />
             <span className="text-xs font-medium tracking-wide text-cyan-300">
@@ -23,7 +19,7 @@ export default function Hero() {
             </span>
           </div>
 
-          <h1 className="max-w-2xl text-4xl font-extrabold leading-[1.12] tracking-tight text-white sm:text-5xl lg:text-6xl">
+          <h1 className="mx-auto max-w-2xl text-4xl font-extrabold leading-[1.12] tracking-tight text-white sm:text-5xl lg:text-6xl">
             Convert Documents.
             <br />
             <span className="text-gradient">
@@ -31,15 +27,13 @@ export default function Hero() {
             </span>
           </h1>
 
-          <p className="mt-7 max-w-xl text-base leading-8 text-slate-400 sm:text-lg">
+          <p className="mx-auto mt-6 max-w-2xl text-sm leading-7 text-slate-400 sm:mt-7 sm:text-lg sm:leading-8">
             Convert Word, PDF, PowerPoint and Markdown files with ease.
             Fast browser-based processing, simple downloads, and no account
             required.
           </p>
 
-
-
-          <div className="mt-10 flex flex-wrap items-center gap-x-7 gap-y-3 text-sm text-slate-400">
+          <div className="mt-7 flex flex-wrap items-center justify-center gap-x-7 gap-y-3 text-xs text-slate-400 sm:mt-9 sm:text-sm">
             <span className="flex items-center gap-2">
               <span className="text-cyan-400">✓</span> No registration
             </span>
@@ -52,11 +46,10 @@ export default function Hero() {
           </div>
         </div>
 
-        {/* RIGHT SIDE - ACTUAL DOCUMENT CONVERTER */}
-        <div className="w-full min-w-0">
+        <div className="mx-auto mt-10 w-full min-w-0 max-w-6xl sm:mt-12">
           <Suspense
             fallback={
-              <div className="flex min-h-100 items-center justify-center rounded-2xl border border-white/10 bg-white/5 text-slate-400">
+              <div className="flex min-h-72 items-center justify-center rounded-2xl border border-white/10 bg-white/5 px-4 text-center text-sm text-slate-400 sm:min-h-80 sm:text-base">
                 Loading document converter...
               </div>
             }
