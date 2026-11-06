@@ -181,7 +181,7 @@ async function createMarkdownOutput(
   }
   if (format === "pptx") {
     return {
-      blob: await convertMarkdownToPowerPoint(markdown, fontSize),
+      blob: await convertMarkdownToPowerPoint(markdown, { fontSize }),
       format: "pptx",
     };
   }
