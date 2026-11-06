@@ -1,40 +1,62 @@
-<<<<<<< HEAD
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Esparks Document Conversion
 
-## Getting Started
+A browser-based Next.js application for converting Word, PDF, PowerPoint, and
+Markdown documents.
 
-First, run the development server:
+## Development
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Run the production checks with:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm run lint
+npm run build
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+## PowerPoint and Markdown interchange
 
-## Learn More
+PowerPoint slides are separated in generated Markdown with an HTML comment:
 
-To learn more about Next.js, take a look at the following resources:
+```markdown
+# Presentation title
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Optional subtitle
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+<!-- slide -->
 
-## Deploy on Vercel
+## Next slide
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+The first heading in each section becomes that slide's title. A level-two
+heading immediately after the first level-one heading is treated as the title
+slide's subtitle. The previous `---` slide separator is also recognized for
+compatibility; horizontal rules in Markdown therefore act as slide boundaries
+when converting to PowerPoint.
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
-=======
-# Esparks-Document-Conversion
->>>>>>> 506eb4683b85786db72492882758d2cb7816d2c8
+Supported cached chart data is written as a `pptx-chart` fenced block and
+reconstructed as an editable chart:
+
+````markdown
+```pptx-chart
+{"type":"bar","barDir":"col","title":"Performance","categories":["Conversions","Uploads"],"series":[{"name":"2025","values":[8,12]},{"name":"2026","values":[14,18]}]}
+```
+````
+
+Chart types currently reconstructed are bar, line, pie, doughnut, and area.
+Other chart types are exported as data tables when possible. PowerPoint chart
+data must be present in the chart's embedded XML cache; when it is unavailable,
+the Markdown contains an explicit note instead of silently omitting the chart.
+Hyperlinks with HTTP(S) or `mailto:` URLs are retained in Markdown and restored
+when converting back to PowerPoint. Bold, italic, underline, explicit RGB
+colors, font sizes, and paragraph alignment are represented with Markdown
+emphasis, inline HTML metadata, and alignment comments. The in-app preview
+removes those metadata wrappers while preserving the visible text.
+
+PowerPoint visual styling and non-text objects such as SmartArt are not fully
+round-tripped. The converter preserves readable text, tables, supported chart
+data, supported links, and selected text styling; it does not guarantee
+pixel-identical slide layouts.

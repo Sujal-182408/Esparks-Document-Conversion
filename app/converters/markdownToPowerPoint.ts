@@ -9,8 +9,7 @@ export type MdToPptxOptions = {
 };
 
 /* ---------- Slide geometry — PowerPoint Windows default 16:9 ---------- */
-const SW = 13.333,
-  SH = 7.5;
+const SW = 13.333;
 const MARGIN_X = 0.75; // left/right
 const CONTENT_W = SW - MARGIN_X * 2; // 11.833
 const HEADER_TOP = 0.45; // title baseline area (Title & Content)
@@ -46,10 +45,20 @@ type Run = {
   italic?: boolean;
   strike?: boolean;
   color?: string;
+  underline?: boolean;
+  fontSize?: number;
   fontFace?: string;
   link?: string;
 };
 type Line = Run[];
+
+type MarkdownChart = {
+  type: "bar" | "line" | "pie" | "doughnut" | "area";
+  barDir?: "bar" | "col";
+  title?: string;
+  categories: string[];
+  series: { name: string; values: number[] }[];
+};
 
 /* ---------- Measurement: canvas is the only honest way ---------- */
 let _canvas: HTMLCanvasElement | null = null;
@@ -63,7 +72,7 @@ function measureWidth(
   fontFace: string,
 ): number {
   if (typeof document === "undefined") {
-    // ~0.55 * fontSize per char in inches — same fallback as fallbackChars()
+    // Approximate 0.55 * fontSize pixels per character when canvas is unavailable.
     return (text.length * fontSize * 0.55) / 72;
   }
   if (!_canvas) _canvas = document.createElement("canvas");
@@ -71,11 +80,6 @@ function measureWidth(
   ctx.font = `${bold ? "700" : "400"} ${fontSize}px ${fontFace}, Arial, sans-serif`;
   return ctx.measureText(text).width / 96;
 }
-/** chars that fit — fallback if canvas unavailable (SSR) */
-function fallbackChars(widthIn: number, fontSize: number) {
-  return Math.max(12, Math.floor((widthIn * 72) / (fontSize * 0.55)));
-}
-
 /** Wrap runs into lines that FIT width. Never splits a word unless word > width. */
 function wrapRuns(
   runs: Run[],
@@ -106,6 +110,8 @@ function wrapRuns(
       last.bold === run.bold &&
       last.italic === run.italic &&
       last.color === run.color &&
+      last.underline === run.underline &&
+      last.fontSize === run.fontSize &&
       last.fontFace === run.fontFace &&
       last.link === run.link
     )
@@ -118,10 +124,11 @@ function wrapRuns(
       continue;
     }
     const ff = t.run.fontFace ?? fontFace;
+    const runFontSize = t.run.fontSize ?? fontSize;
     let remaining = t.text;
     // Hard-split overlong words char-by-char
     while (remaining) {
-      const w = measureWidth(remaining, fontSize, !!t.run.bold, ff);
+      const w = measureWidth(remaining, runFontSize, !!t.run.bold, ff);
       if (curW + w <= widthIn) {
         pushRun(remaining, t.run);
         curW += w;
@@ -136,7 +143,7 @@ function wrapRuns(
         while (lo < hi) {
           const mid = Math.ceil((lo + hi) / 2);
           if (
-            measureWidth(remaining.slice(0, mid), fontSize, !!t.run.bold, ff) <=
+            measureWidth(remaining.slice(0, mid), runFontSize, !!t.run.bold, ff) <=
             widthIn - curW
           )
             lo = mid;
@@ -146,7 +153,7 @@ function wrapRuns(
         pushRun(remaining.slice(0, take), t.run);
         curW += measureWidth(
           remaining.slice(0, take),
-          fontSize,
+          runFontSize,
           !!t.run.bold,
           ff,
         );
@@ -164,42 +171,57 @@ function wrapRuns(
 function plainText(runs: Run[]) {
   return runs.map((r) => r.text).join("");
 }
-function lineText(l: Line) {
-  return l.map((r) => r.text).join("");
+
+function toPptxTextRuns(runs: Run[]): PptxGenJS.TextProps[] {
+  return runs.map((run) => ({
+    text: run.text,
+    options: {
+      bold: run.bold,
+      italic: run.italic,
+      strike: run.strike,
+      underline: run.underline ? { style: "sng" } : undefined,
+      color: run.color,
+      fontSize: run.fontSize,
+      fontFace: run.fontFace,
+      ...(run.link ? { hyperlink: { url: run.link } } : {}),
+    },
+  }));
 }
 
 /* ---------- Markdown -> Runs ---------- */
 function inlineRuns(tokens: Token[], inherited: Partial<Run> = {}): Run[] {
   const out: Run[] = [];
+  let active = inherited;
+  const styleStack: Partial<Run>[] = [];
   const add = (text: string, o: Partial<Run> = {}) => {
-    if (text) out.push({ text, ...inherited, ...o });
+    if (text) out.push({ text, ...active, ...o });
   };
   for (const t of tokens) {
     switch (t.type) {
       case "text":
       case "escape":
         if ("tokens" in t && Array.isArray(t.tokens))
-          out.push(...inlineRuns(t.tokens, inherited));
+          out.push(...inlineRuns(t.tokens, active));
         else if ("text" in t) add(t.text);
         break;
       case "strong":
-        out.push(...inlineRuns(t.tokens ?? [], { ...inherited, bold: true }));
+        out.push(...inlineRuns(t.tokens ?? [], { ...active, bold: true }));
         break;
       case "em":
-        out.push(...inlineRuns(t.tokens ?? [], { ...inherited, italic: true }));
+        out.push(...inlineRuns(t.tokens ?? [], { ...active, italic: true }));
         break;
       case "del":
-        out.push(...inlineRuns(t.tokens ?? [], { ...inherited, strike: true }));
+        out.push(...inlineRuns(t.tokens ?? [], { ...active, strike: true }));
         break;
       case "codespan":
         add(t.text, { fontFace: FONT_MONO, color: C.codeText });
         break;
       case "link": {
-        const href = (t as Tokens.Link).href ?? "";
+        const href = t.href ?? "";
         const safe = /^(https?:|mailto:|#|\/)/i.test(href) ? href : undefined;
         out.push(
           ...inlineRuns(t.tokens ?? [], {
-            ...inherited,
+            ...active,
             color: C.link,
             link: safe,
           }),
@@ -207,28 +229,48 @@ function inlineRuns(tokens: Token[], inherited: Partial<Run> = {}): Run[] {
         break;
       }
       case "image":
-        add(`[Image: ${t.text || (t as Tokens.Image).href}]`, {
+        add(`[Image: ${t.text || t.href}]`, {
           italic: true,
           color: C.muted,
         });
         break;
       case "br":
-        out.push({ text: "\n", ...inherited });
+        out.push({ text: "\n", ...active });
         break;
+      case "html": {
+        const raw = t.raw.trim();
+        const color = raw.match(
+          /^<span\b[^>]*\bdata-pptx-color="#?([0-9a-f]{6})"[^>]*>$/i,
+        )?.[1];
+        const size = raw.match(
+          /^<span\b[^>]*\bdata-pptx-font-size="(\d+(?:\.\d+)?)"[^>]*>$/i,
+        )?.[1];
+        if (raw === "<u>") {
+          styleStack.push(active);
+          active = { ...active, underline: true };
+        } else if (raw === "</u>" || raw === "</span>") {
+          active = styleStack.pop() ?? inherited;
+        } else if (color || size) {
+          styleStack.push(active);
+          active = {
+            ...active,
+            ...(color ? { color: color.toUpperCase() } : {}),
+            ...(size ? { fontSize: Number(size) } : {}),
+          };
+        }
+        break;
+      }
       default:
         if ("tokens" in t && Array.isArray(t.tokens))
-          out.push(...inlineRuns(t.tokens, inherited));
+          out.push(...inlineRuns(t.tokens, active));
         else if ("text" in t && typeof t.text === "string") add(t.text);
     }
   }
   return out;
 }
-const isList = (t: Token): t is Tokens.List =>
-  t.type === "list" && "items" in t && Array.isArray((t as any).items);
-const isImage = (t: Token): t is Tokens.Image =>
-  t.type === "image" && "href" in t && typeof (t as any).href === "string";
-const isTable = (t: Token): t is Tokens.Table =>
-  t.type === "table" && "header" in t && Array.isArray((t as any).header);
+const isList = (t: Token): t is Tokens.List => t.type === "list";
+const isImage = (t: Token): t is Tokens.Image => t.type === "image";
+const isTable = (t: Token): t is Tokens.Table => t.type === "table";
 
 /* ---------- Main ---------- */
 export async function convertMarkdownToPowerPoint(
@@ -238,7 +280,7 @@ export async function convertMarkdownToPowerPoint(
   if (!markdown?.trim()) throw new Error("The Markdown file is empty.");
   if (new Blob([markdown]).size > 20 * 1024 * 1024)
     throw new Error("The maximum file size is 20 MB.");
-  // Strip front-matter + HTML comments (outside code — marked handles code, so do it token-aware: simple front-matter only)
+  // Keep slide and style metadata comments after removing optional YAML front matter.
   let clean = markdown
     .replace(/^\uFEFF/, "")
     .replace(/\r\n?/g, "\n")
@@ -262,8 +304,8 @@ export async function convertMarkdownToPowerPoint(
   let slideNo = 0;
   let slideTitle = opts.title ?? "Markdown Presentation";
   let hasContent = false;
+  let pendingAlignment: "left" | "center" | "right" | "justify" | undefined;
   let y = CONTENT_TOP;
-  let isTitleSlide = false; // tracks Title Slide vs Title & Content — used by addTitleSlide/addContentSlide
 
   /* ----- Slide builders: proper PPTX layouts ----- */
   function footer() {
@@ -277,13 +319,18 @@ export async function convertMarkdownToPowerPoint(
       color: C.muted,
       align: "right",
       margin: 0,
+      objectName: "Document Conversion Slide Number",
     });
   }
   /** Layout 1: Title Slide — ONLY for first H1 / doc title */
-  function addTitleSlide(title: string) {
+  function addTitleSlide(
+    title: string,
+    subtitle = "Converted from Markdown",
+    titleRuns?: Run[],
+    subtitleRuns?: Run[],
+  ) {
     slideNo++;
     slideTitle = title || "Untitled";
-    isTitleSlide = true;
     hasContent = false;
     slide = pptx.addSlide();
     slide.background = { color: C.bg };
@@ -304,41 +351,46 @@ export async function convertMarkdownToPowerPoint(
       fill: { color: C.accent },
       line: { color: C.accent, transparency: 100 },
     });
-    slide.addText(slideTitle, {
-      x: 1.2,
-      y: 2.6,
-      w: SW - 2.4,
-      h: 1.6,
-      fontFace: FONT,
-      fontSize: 40,
-      bold: true,
-      color: C.primary,
-      align: "center",
-      valign: "middle",
-      margin: 0,
-      breakLine: true,
-      fit: "shrink",
-    });
-    slide.addText("Converted from Markdown", {
-      x: 1.2,
-      y: 4.3,
-      w: SW - 2.4,
-      h: 0.4,
-      fontFace: FONT,
-      fontSize: 16,
-      color: C.muted,
-      align: "center",
-      margin: 0,
-    });
+    slide.addText(
+      titleRuns?.length ? toPptxTextRuns(titleRuns) : slideTitle,
+      {
+        x: 1.2,
+        y: 2.6,
+        w: SW - 2.4,
+        h: 1.6,
+        fontFace: FONT,
+        fontSize: 40,
+        bold: true,
+        color: C.primary,
+        align: "center",
+        valign: "middle",
+        margin: 0,
+        breakLine: true,
+        fit: "shrink",
+      },
+    );
+    slide.addText(
+      subtitleRuns?.length ? toPptxTextRuns(subtitleRuns) : subtitle,
+      {
+        x: 1.2,
+        y: 4.3,
+        w: SW - 2.4,
+        h: 0.4,
+        fontFace: FONT,
+        fontSize: 16,
+        color: C.muted,
+        align: "center",
+        margin: 0,
+      },
+    );
     footer();
     y = CONTENT_TOP;
   }
   /** Layout 2: Title & Content — every other slide. This is Windows default. */
-  function addContentSlide(title: string) {
+  function addContentSlide(title: string, titleRuns?: Run[]) {
     slideNo++;
     slideTitle =
       title.replace(/(?: \(continued\))+$/g, "").trim() || "Untitled section";
-    isTitleSlide = false;
     hasContent = false;
     slide = pptx.addSlide();
     slide.background = { color: C.bg };
@@ -351,20 +403,23 @@ export async function convertMarkdownToPowerPoint(
       line: { color: C.accent, transparency: 100 },
     });
     // Title box is TALL (0.95") + fit shrink, so 2-line titles never hit divider
-    slide.addText(slideTitle, {
-      x: MARGIN_X,
-      y: HEADER_TOP,
-      w: CONTENT_W,
-      h: HEADER_H,
-      fontFace: FONT,
-      fontSize: 28,
-      bold: true,
-      color: C.primary,
-      margin: 0,
-      valign: "middle",
-      breakLine: true,
-      fit: "shrink",
-    });
+    slide.addText(
+      titleRuns?.length ? toPptxTextRuns(titleRuns) : slideTitle,
+      {
+        x: MARGIN_X,
+        y: HEADER_TOP,
+        w: CONTENT_W,
+        h: HEADER_H,
+        fontFace: FONT,
+        fontSize: 28,
+        bold: true,
+        color: C.primary,
+        margin: 0,
+        valign: "middle",
+        breakLine: true,
+        fit: "shrink",
+      },
+    );
     slide.addShape(pptx.ShapeType.line, {
       x: MARGIN_X,
       y: DIVIDER_Y,
@@ -402,12 +457,16 @@ export async function convertMarkdownToPowerPoint(
       color?: string;
       indent?: number;
       quote?: boolean;
+      align?: "left" | "center" | "right" | "justify";
     } = {},
   ) {
     const text = plainText(runs);
     if (!text.trim()) return;
     ensureSlide();
-    const fs = o.fontSize ?? bodySize;
+    const fs = Math.max(
+      o.fontSize ?? bodySize,
+      ...runs.map((run) => run.fontSize ?? 0),
+    );
     const indent = o.indent ?? 0;
     const quotePad = o.quote ? 0.22 : 0;
     const x = MARGIN_X + indent + quotePad;
@@ -468,19 +527,7 @@ export async function convertMarkdownToPowerPoint(
       // NO fit:"shrink" — height is exact, so nothing overflows.
       const pptxRuns: PptxGenJS.TextProps[] = [];
       pageLines.forEach((line, li) => {
-        line.forEach((r) =>
-          pptxRuns.push({
-            text: r.text,
-            options: {
-              bold: r.bold,
-              italic: r.italic,
-              strike: r.strike,
-              color: r.color,
-              fontFace: r.fontFace,
-              ...(r.link ? { hyperlink: { url: r.link } } : {}),
-            },
-          }),
-        );
+        pptxRuns.push(...toPptxTextRuns(line));
         if (li < pageLines.length - 1)
           pptxRuns.push({ text: "", options: { breakLine: true } });
       });
@@ -495,6 +542,7 @@ export async function convertMarkdownToPowerPoint(
         margin: 0.02,
         breakLine: true,
         valign: "top",
+        align: o.align,
         lineSpacingMultiple: 1.15,
         paraSpaceAfter: 2,
       });
@@ -510,12 +558,12 @@ export async function convertMarkdownToPowerPoint(
     const title = plainText(runs) || "Untitled section";
     if (level === 1) {
       if (slideNo === 0)
-        addTitleSlide(title); // first H1 = Title Slide
-      else addContentSlide(title); // later H1 = new Title & Content
+        addTitleSlide(title, "Converted from Markdown", runs);
+      else addContentSlide(title, runs);
       return;
     }
     if (level === 2) {
-      addContentSlide(title);
+      addContentSlide(title, runs);
       return;
     }
     const sizes: Record<number, number> = { 3: 22, 4: 20, 5: 18, 6: 16 };
@@ -606,6 +654,83 @@ export async function convertMarkdownToPowerPoint(
     }
   }
 
+  function addChart(code: string) {
+    let chart: MarkdownChart;
+    try {
+      chart = JSON.parse(code) as MarkdownChart;
+    } catch {
+      throw new Error("The pptx-chart block must contain valid JSON.");
+    }
+
+    const allowedTypes = ["bar", "line", "pie", "doughnut", "area"];
+    if (
+      !chart ||
+      !allowedTypes.includes(chart.type) ||
+      !Array.isArray(chart.categories) ||
+      chart.categories.length === 0 ||
+      chart.categories.some((category) => typeof category !== "string") ||
+      !Array.isArray(chart.series) ||
+      chart.series.length === 0 ||
+      chart.series.some(
+        (series) =>
+          !series ||
+          typeof series !== "object" ||
+          typeof series.name !== "string" ||
+          !Array.isArray(series.values) ||
+          series.values.length !== chart.categories.length ||
+          series.values.some(
+            (value) => typeof value !== "number" || !Number.isFinite(value),
+          ),
+      )
+    ) {
+      throw new Error(
+        "The pptx-chart block requires categories and series with matching numeric values.",
+      );
+    }
+    if (
+      (chart.barDir !== undefined &&
+        chart.barDir !== "bar" &&
+        chart.barDir !== "col") ||
+      (chart.title !== undefined && typeof chart.title !== "string")
+    ) {
+      throw new Error("The pptx-chart block contains unsupported chart options.");
+    }
+    if (chart.type === "pie" || chart.type === "doughnut") {
+      if (chart.series.length !== 1) {
+        throw new Error(
+          "Pie and doughnut charts require exactly one data series.",
+        );
+      }
+    }
+
+    ensureSlide();
+    const h = Math.min(4.4, Math.max(2.6, remainingH() - 0.2));
+    ensureSpace(h + GAP);
+    slide.addChart(
+      chart.type,
+      chart.series.map((series) => ({
+        name: series.name,
+        labels: chart.categories,
+        values: series.values,
+      })),
+      {
+        x: MARGIN_X,
+        y,
+        w: CONTENT_W,
+        h,
+        showTitle: Boolean(chart.title),
+        ...(chart.title ? { title: chart.title } : {}),
+        ...(chart.type === "bar" && chart.barDir
+          ? { barDir: chart.barDir }
+          : {}),
+        showLegend: chart.series.length > 1,
+        showValue: false,
+      },
+    );
+    y += h + GAP;
+    hasContent = true;
+  }
+
   async function resolveImage(src: string): Promise<string> {
     if (/^data:image\/(png|jpe?g|gif);base64,/.test(src)) return src;
     if (/^data:image\/webp/i.test(src))
@@ -637,70 +762,55 @@ export async function convertMarkdownToPowerPoint(
   }
   async function addImage(tok: Tokens.Image) {
     ensureSlide();
-    try {
-      const data = await resolveImage(tok.href);
-      const d = await imgSize(data);
-      const scale = Math.min(CONTENT_W / d.w, (CONTENT_H - 0.2) / d.h, 1);
-      const w = d.w * scale,
-        h = d.h * scale;
-      ensureSpace(h + GAP);
-      slide.addImage({
-        data,
-        x: MARGIN_X + (CONTENT_W - w) / 2,
-        y,
-        w,
-        h,
-        altText: tok.text || "Markdown image",
-      });
-      y += h + GAP;
-      hasContent = true;
-    } catch {
-      drawTextBlock([
-        {
-          text: `[Image could not be loaded: ${tok.text || tok.href}]`,
-          italic: true,
-          color: C.muted,
-        },
-      ]);
-    }
+    const data = await resolveImage(tok.href);
+    const d = await imgSize(data);
+    const scale = Math.min(CONTENT_W / d.w, (CONTENT_H - 0.2) / d.h, 1);
+    const w = d.w * scale,
+      h = d.h * scale;
+    ensureSpace(h + GAP);
+    slide.addImage({
+      data,
+      x: MARGIN_X + (CONTENT_W - w) / 2,
+      y,
+      w,
+      h,
+      altText: tok.text || "Markdown image",
+    });
+    y += h + GAP;
+    hasContent = true;
   }
 
   async function addList(tok: Tokens.List, level = 0) {
     for (const [i, item] of tok.items.entries()) {
-      const prefix = (item as any).task
-        ? (item as any).checked
+      const prefix = item.task
+        ? item.checked
           ? "☑ "
           : "☐ "
         : tok.ordered
-          ? `${Number((tok as any).start || 1) + i}. `
+          ? `${Number(tok.start || 1) + i}. `
           : "• ";
       const children = (item.tokens ?? []) as Token[];
       const imgs = children.filter(isImage);
-      const flushText = (toks: Token[], first: boolean) => {
+      const flushText = (toks: Token[]) => {
         const runs = inlineRuns(toks);
         if (!runs.length) return;
         runs.unshift({ text: prefix, bold: true, color: C.accent });
         drawTextBlock(runs, { indent: level * 0.32 });
       };
       if (!imgs.length)
-        flushText(
-          children.filter((c) => !isList(c)),
-          true,
-        );
+        flushText(children.filter((c) => !isList(c)));
       else {
         let buf: Token[] = [];
-        let first = true;
         for (const c of children) {
           if (isImage(c)) {
             if (buf.length) {
-              flushText(buf, first);
-              first = false;
+              flushText(buf);
               buf = [];
             }
             await addImage(c);
           } else if (!isList(c)) buf.push(c);
         }
-        if (buf.length) flushText(buf, first);
+        if (buf.length) flushText(buf);
       }
       for (const c of children) if (isList(c)) await addList(c, level + 1);
     }
@@ -751,7 +861,7 @@ export async function convertMarkdownToPowerPoint(
           fill: {
             color: isHead ? C.tableHead : ri % 2 === 0 ? C.bg : C.tableAlt,
           },
-          align: (tok.align?.[ci] as any) ?? "left",
+          align: tok.align?.[ci] ?? "left",
           valign: "middle",
           margin: 0.06,
         },
@@ -803,12 +913,19 @@ export async function convertMarkdownToPowerPoint(
     }
   }
 
-  async function addInline(toks: Token[], o: { quote?: boolean } = {}) {
+  async function addInline(
+    toks: Token[],
+    o: {
+      quote?: boolean;
+      align?: "left" | "center" | "right" | "justify";
+    } = {},
+  ) {
     let buf: Token[] = [];
     const flush = () => {
       if (buf.length) {
         drawTextBlock(inlineRuns(buf), {
           quote: o.quote,
+          align: o.align,
           italic: o.quote,
           color: o.quote ? C.body : undefined,
         });
@@ -830,11 +947,15 @@ export async function convertMarkdownToPowerPoint(
         addHeading((tok as Tokens.Heading).text, (tok as Tokens.Heading).depth);
         break;
       case "paragraph":
-        await addInline((tok as Tokens.Paragraph).tokens ?? []);
+        await addInline((tok as Tokens.Paragraph).tokens ?? [], {
+          align: pendingAlignment,
+        });
+        pendingAlignment = undefined;
         break;
       case "text": {
         const t = tok as Tokens.Text;
-        if ("tokens" in t && Array.isArray(t.tokens)) await addInline(t.tokens);
+        if ("tokens" in t && Array.isArray(t.tokens))
+          await addInline(t.tokens);
         else if ("text" in t) drawTextBlock([{ text: t.text }]);
         break;
       }
@@ -847,10 +968,14 @@ export async function convertMarkdownToPowerPoint(
         });
         break;
       case "code":
-        addCodeBlock(
-          (tok as Tokens.Code).text,
-          (tok as Tokens.Code).lang ?? "",
-        );
+        if ((tok as Tokens.Code).lang?.trim().toLowerCase() === "pptx-chart") {
+          addChart((tok as Tokens.Code).text);
+        } else {
+          addCodeBlock(
+            (tok as Tokens.Code).text,
+            (tok as Tokens.Code).lang ?? "",
+          );
+        }
         break;
       case "table":
         if (isTable(tok)) addTable(tok);
@@ -871,17 +996,159 @@ export async function convertMarkdownToPowerPoint(
       case "space":
       case "def":
       case "html":
+        if ("text" in tok && typeof tok.text === "string") {
+          const alignment = tok.text
+            .trim()
+            .match(/^<!--\s*pptx-align:(left|center|right|justify)\s*-->$/);
+          if (alignment) pendingAlignment = alignment[1] as typeof pendingAlignment;
+        }
         break;
       default:
-        if ("tokens" in tok && Array.isArray((tok as any).tokens))
-          await addInline((tok as any).tokens);
-        else if ("text" in tok && typeof (tok as any).text === "string")
-          drawTextBlock([{ text: (tok as any).text }]);
+        if ("tokens" in tok && Array.isArray(tok.tokens))
+          await addInline(tok.tokens);
+        else if ("text" in tok && typeof tok.text === "string")
+          drawTextBlock([{ text: tok.text }]);
     }
   }
 
   const tokens = marked.lexer(clean);
-  for (const t of tokens) await addBlock(t);
+  const slideSegments: Token[][] = [[]];
+  let hasSlideSeparators = false;
+  for (const token of tokens) {
+    const isMarker =
+      token.type === "html" &&
+      "text" in token &&
+      typeof token.text === "string" &&
+      token.text.trim() === "<!-- slide -->";
+    if (isMarker || token.type === "hr") {
+      hasSlideSeparators = true;
+      slideSegments.push([]);
+    } else {
+      slideSegments[slideSegments.length - 1].push(token);
+    }
+  }
+
+  if (hasSlideSeparators) {
+    const segments = [...slideSegments];
+    while (
+      segments.length &&
+      !segments[0].some((token) => token.type !== "space")
+    ) {
+      segments.shift();
+    }
+    while (
+      segments.length &&
+      !segments[segments.length - 1].some((token) => token.type !== "space")
+    ) {
+      segments.pop();
+    }
+    for (const [segmentIndex, segment] of segments.entries()) {
+      const firstHeadingIndex = segment.findIndex(
+        (token) => token.type === "heading",
+      );
+      const titleToken =
+        firstHeadingIndex >= 0
+          ? (segment[firstHeadingIndex] as Tokens.Heading)
+          : undefined;
+      const titleRuns = titleToken
+        ? inlineRuns(marked.lexer(titleToken.text) as Token[])
+        : undefined;
+      const title =
+        (titleRuns?.length ? plainText(titleRuns) : titleToken?.text.trim()) ||
+        `Slide ${segmentIndex + 1}`;
+      const nextMeaningfulIndex = segment.findIndex(
+        (token, index) =>
+          index > firstHeadingIndex && token.type !== "space",
+      );
+      const subtitleIndex =
+        segmentIndex === 0 &&
+        titleToken?.depth === 1 &&
+        nextMeaningfulIndex >= 0 &&
+        segment[nextMeaningfulIndex].type === "heading" &&
+        (segment[nextMeaningfulIndex] as Tokens.Heading).depth === 2
+          ? nextMeaningfulIndex
+          : -1;
+      const hasSubtitle =
+        subtitleIndex > firstHeadingIndex &&
+        subtitleIndex < segment.length &&
+        segment[subtitleIndex].type === "heading";
+      const subtitleToken = hasSubtitle
+        ? (segment[subtitleIndex] as Tokens.Heading)
+        : undefined;
+      const subtitleRuns = subtitleToken
+        ? inlineRuns(marked.lexer(subtitleToken.text) as Token[])
+        : undefined;
+
+      if (
+        segmentIndex === 0 &&
+        titleToken?.depth === 1 &&
+        slideNo === 0
+      ) {
+        addTitleSlide(
+          title,
+          subtitleToken?.text ?? "Converted from Markdown",
+          titleRuns,
+          subtitleRuns,
+        );
+      } else {
+        addContentSlide(title, titleRuns);
+      }
+
+      for (const [tokenIndex, token] of segment.entries()) {
+        if (
+          tokenIndex === firstHeadingIndex ||
+          (hasSubtitle && tokenIndex === subtitleIndex)
+        ) continue;
+        if (token.type === "heading") {
+          const heading = token as Tokens.Heading;
+          drawTextBlock(inlineRuns(marked.lexer(heading.text) as Token[]), {
+            fontSize: ({ 1: 24, 2: 22, 3: 20, 4: 18, 5: 16, 6: 14 })[
+              heading.depth
+            ],
+            bold: true,
+            color: C.primary,
+          });
+        } else {
+          await addBlock(token);
+        }
+      }
+    }
+  } else {
+    const firstHeadingIndex = tokens.findIndex(
+      (token) => token.type === "heading",
+    );
+    const firstHeading =
+      firstHeadingIndex >= 0
+        ? (tokens[firstHeadingIndex] as Tokens.Heading)
+        : undefined;
+    const nextContentIndex = tokens.findIndex(
+      (token, index) =>
+        index > firstHeadingIndex && token.type !== "space",
+    );
+    const subtitle =
+      firstHeading?.depth === 1 &&
+      nextContentIndex >= 0 &&
+      tokens[nextContentIndex].type === "heading" &&
+      (tokens[nextContentIndex] as Tokens.Heading).depth === 2
+        ? (tokens[nextContentIndex] as Tokens.Heading)
+        : undefined;
+    if (firstHeading?.depth === 1 && slideNo === 0) {
+      addTitleSlide(
+        firstHeading.text,
+        subtitle?.text ?? "Converted from Markdown",
+        inlineRuns(marked.lexer(firstHeading.text) as Token[]),
+        subtitle
+          ? inlineRuns(marked.lexer(subtitle.text) as Token[])
+          : undefined,
+      );
+      for (const [index, token] of tokens.entries()) {
+        if (index === firstHeadingIndex || token === subtitle) continue;
+        await addBlock(token);
+      }
+    } else {
+      for (const token of tokens) await addBlock(token);
+    }
+  }
   if (slideNo === 0) {
     addTitleSlide(opts.title ?? "Markdown Presentation");
     drawTextBlock([

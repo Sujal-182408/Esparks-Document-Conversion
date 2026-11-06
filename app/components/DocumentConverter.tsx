@@ -203,6 +203,19 @@ const formatFileSize = (size: number): string =>
     ? `${(size / 1024).toFixed(1)} KB`
     : `${(size / 1024 / 1024).toFixed(2)} MB`;
 
+const markdownForPreview = (markdown: string): string =>
+  markdown
+    .replace(
+      /<span\b[^>]*\bdata-pptx-(?:color|font-size)="[^"]+"[^>]*>([\s\S]*?)<\/span>/gi,
+      "$1",
+    )
+    .replace(/<\/?u>/gi, "")
+    .replace(
+      /<!--\s*pptx-align:(?:left|center|right|justify)\s*-->/gi,
+      "",
+    )
+    .replace(/<!--\s*slide\s*-->/gi, "\n\n---\n\n");
+
 export default function DocumentConverter({
   initialInputFormat,
   initialOutputFormat
@@ -503,7 +516,7 @@ function DocumentConverterContent({
         remarkPlugins={[remarkGfm]}
         components={markdownPreviewComponents(fontSize)}
       >
-        {markdown}
+        {markdownForPreview(markdown)}
       </ReactMarkdown>
     </article>
   );
