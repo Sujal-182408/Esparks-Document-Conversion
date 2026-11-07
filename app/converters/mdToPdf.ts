@@ -29,7 +29,7 @@ export async function convertMarkdownToPdf(
     throw new Error("The maximum Markdown file size is 28 MB.");
   }
 
-  const html = await marked.parse(markdown);
+  const html = await marked.parse(markdown, { breaks: true });
   const safeHtml = DOMPurify.sanitize(html);
 
   const container = document.createElement("div");

@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkBreaks from "remark-breaks";
 
 import {
   downloadTextFile,
@@ -606,7 +607,7 @@ function DocumentConverterContent({
       className="break-words font-sans leading-relaxed text-slate-700"
     >
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkBreaks]}
         components={markdownPreviewComponents(fontSize)}
       >
         {markdownForPreview(markdown)}

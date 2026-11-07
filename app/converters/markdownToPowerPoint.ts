@@ -593,7 +593,7 @@ export async function convertMarkdownToPowerPoint(
   }
 
   function addHeading(text: string, level: number) {
-    const runs = inlineRuns(marked.lexer(text) as Token[]);
+    const runs = inlineRuns(marked.lexer(text, { breaks: true }) as Token[]);
     const title = plainText(runs) || "Untitled section";
     if (level === 1) {
       if (slideNo === 0)
@@ -1183,7 +1183,7 @@ export async function convertMarkdownToPowerPoint(
     }
   }
 
-  const tokens = marked.lexer(clean);
+  const tokens = marked.lexer(clean, { breaks: true });
   const slideSegments: Token[][] = [[]];
   let hasSlideSeparators = false;
   for (const token of tokens) {
@@ -1223,7 +1223,7 @@ export async function convertMarkdownToPowerPoint(
           ? (segment[firstHeadingIndex] as Tokens.Heading)
           : undefined;
       const titleRuns = titleToken
-        ? inlineRuns(marked.lexer(titleToken.text) as Token[])
+        ? inlineRuns(marked.lexer(titleToken.text, { breaks: true }) as Token[])
         : undefined;
       const title =
         (titleRuns?.length ? plainText(titleRuns) : titleToken?.text.trim()) ||
@@ -1248,7 +1248,7 @@ export async function convertMarkdownToPowerPoint(
         ? (segment[subtitleIndex] as Tokens.Heading)
         : undefined;
       const subtitleRuns = subtitleToken
-        ? inlineRuns(marked.lexer(subtitleToken.text) as Token[])
+        ? inlineRuns(marked.lexer(subtitleToken.text, { breaks: true }) as Token[])
         : undefined;
 
       if (
@@ -1273,7 +1273,7 @@ export async function convertMarkdownToPowerPoint(
         ) continue;
         if (token.type === "heading") {
           const heading = token as Tokens.Heading;
-          drawTextBlock(inlineRuns(marked.lexer(heading.text) as Token[]), {
+          drawTextBlock(inlineRuns(marked.lexer(heading.text, { breaks: true }) as Token[]), {
             fontSize: ({ 1: 24, 2: 22, 3: 20, 4: 18, 5: 16, 6: 14 })[
               heading.depth
             ],
@@ -1308,9 +1308,9 @@ export async function convertMarkdownToPowerPoint(
       addTitleSlide(
         firstHeading.text,
         subtitle?.text ?? "Converted from Markdown",
-        inlineRuns(marked.lexer(firstHeading.text) as Token[]),
+        inlineRuns(marked.lexer(firstHeading.text, { breaks: true }) as Token[]),
         subtitle
-          ? inlineRuns(marked.lexer(subtitle.text) as Token[])
+          ? inlineRuns(marked.lexer(subtitle.text, { breaks: true }) as Token[])
           : undefined,
       );
       for (const [index, token] of tokens.entries()) {

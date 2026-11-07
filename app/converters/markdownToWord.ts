@@ -377,7 +377,7 @@ export async function convertMarkdownToWord(
   }
 
   try {
-    const tokens = marked.lexer(markdown);
+    const tokens = marked.lexer(markdown, { breaks: true });
 
     const document = new Document({
       numbering: {
