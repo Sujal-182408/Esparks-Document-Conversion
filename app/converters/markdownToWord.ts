@@ -189,7 +189,8 @@ function makeParagraph(
     numbered?: boolean;
     listLevel?: number;
     quote?: boolean;
-  } = {}
+  } = {},
+  fontSize = 14
 ): Paragraph {
   const runs = inlineRuns(getInlineTokens(token));
 
@@ -202,14 +203,15 @@ function makeParagraph(
         ? { reference: "markdown-numbering", level: options.listLevel ?? 0 }
         : undefined,
     indent: options.quote ? { left: 600 } : undefined,
-    spacing: { after: 160 },
+    spacing: { after: Math.round(160 * (fontSize / 14)) },
   });
 }
 
 function convertTokens(
   tokens: Token[],
   quote = false,
-  listLevel = 0
+  listLevel = 0,
+  fontSize = 14
 ): (Paragraph | Table)[] {
   const output: (Paragraph | Table)[] = [];
 
@@ -228,23 +230,23 @@ function convertTokens(
         output.push(
           makeParagraph(token, {
             heading: headingLevels[Math.min(token.depth - 1, 5)],
-          })
+          }, fontSize)
         );
         break;
       }
 
       case "paragraph":
-        output.push(makeParagraph(token, { quote }));
+        output.push(makeParagraph(token, { quote }, fontSize));
         break;
 
       case "text":
         if (token.tokens) {
-          output.push(makeParagraph(token, { quote }));
+          output.push(makeParagraph(token, { quote }, fontSize));
         }
         break;
 
       case "blockquote":
-        output.push(...convertTokens(token.tokens ?? [], true));
+        output.push(...convertTokens(token.tokens ?? [], true, 0, fontSize));
         break;
 
       case "list":
@@ -260,12 +262,12 @@ function convertTokens(
               bullet: !token.ordered,
               numbered: token.ordered,
               listLevel,
-            })
+            }, fontSize)
           );
 
           for (const child of item.tokens) {
             if (child.type === "list") {
-              output.push(...convertTokens([child], quote, listLevel + 1));
+              output.push(...convertTokens([child], quote, listLevel + 1, fontSize));
             }
           }
         }
@@ -288,7 +290,11 @@ function convertTokens(
               ]),
               shading: { type: ShadingType.CLEAR, fill: "F2F4F7" },
               indent: { left: 180, right: 180 },
-              spacing: { before: 100, after: 200, line: 240 },
+              spacing: {
+                before: Math.round(100 * (fontSize / 14)),
+                after: Math.round(200 * (fontSize / 14)),
+                line: Math.round(240 * (fontSize / 14)),
+              },
             })
           );
         }
@@ -304,7 +310,7 @@ function convertTokens(
                 color: "000000",
               },
             },
-            spacing: { after: 200 },
+            spacing: { after: Math.round(200 * (fontSize / 14)) },
           })
         );
         break;
@@ -419,23 +425,28 @@ export async function convertMarkdownToWord(
         default: {
           document: {
             run: { font: "Arial", size: fontSize * 2, color: "000000" },
-            paragraph: { spacing: { after: 160, line: 276 } },
+            paragraph: {
+              spacing: {
+                after: Math.round(160 * (fontSize / 14)),
+                line: Math.round(276 * (fontSize / 14)),
+              },
+            },
           },
           title: {
             run: { font: "Arial", size: Math.round(fontSize * 2 * (36 / 22)), bold: true, color: "000000" },
-            paragraph: { spacing: { before: 240, after: 240 } },
+            paragraph: { spacing: { before: Math.round(240 * (fontSize / 14)), after: Math.round(240 * (fontSize / 14)) } },
           },
           heading1: {
             run: { font: "Arial", size: Math.round(fontSize * 2 * (32 / 22)), bold: true, color: "000000" },
-            paragraph: { spacing: { before: 320, after: 160 }, keepNext: true },
+            paragraph: { spacing: { before: Math.round(320 * (fontSize / 14)), after: Math.round(160 * (fontSize / 14)) }, keepNext: true },
           },
           heading2: {
             run: { font: "Arial", size: Math.round(fontSize * 2 * (28 / 22)), bold: true, color: "000000" },
-            paragraph: { spacing: { before: 280, after: 140 }, keepNext: true },
+            paragraph: { spacing: { before: Math.round(280 * (fontSize / 14)), after: Math.round(140 * (fontSize / 14)) }, keepNext: true },
           },
           heading3: {
             run: { font: "Arial", size: Math.round(fontSize * 2 * (24 / 22)), bold: true, color: "000000" },
-            paragraph: { spacing: { before: 240, after: 120 }, keepNext: true },
+            paragraph: { spacing: { before: Math.round(240 * (fontSize / 14)), after: Math.round(120 * (fontSize / 14)) }, keepNext: true },
           },
           heading4: {
             run: { font: "Arial", size: fontSize * 2, bold: true, color: "000000" },
@@ -463,7 +474,7 @@ export async function convertMarkdownToWord(
               },
             },
           },
-          children: convertTokens(tokens),
+          children: convertTokens(tokens, false, 0, fontSize),
         },
       ],
     });

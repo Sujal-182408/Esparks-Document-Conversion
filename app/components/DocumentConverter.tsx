@@ -6,7 +6,6 @@ import { useSearchParams } from "next/navigation";
 import {
   Upload, FileText, Download, RefreshCw, X,
   CheckCircle2, AlertCircle, ChevronDown, Eye, Maximize2, Minimize2,
-  Minus, Plus
 } from "lucide-react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -91,45 +90,45 @@ const extensions: Record<Format, string> = {
 
 const markdownPreviewComponents = (fontSize: number): Components => ({
   h1: ({ children }) => (
-    <h1 style={{ fontSize: `${fontSize * (30 / 14)}pt` }} className="mb-5 mt-8 border-b border-slate-200 pb-3 font-bold text-slate-900 first:mt-0">
+    <h1 style={{ fontSize: `${fontSize * (30 / 14)}pt`, lineHeight: 1.25, paddingBottom: "0.35em" }} className="mb-[0.55em] mt-[1.4em] border-b border-slate-200 font-bold text-slate-900 first:mt-0">
       {children}
     </h1>
   ),
   h2: ({ children }) => (
-    <h2 style={{ fontSize: `${fontSize * (24 / 14)}pt` }} className="mb-4 mt-7 font-bold text-slate-900">
+    <h2 style={{ fontSize: `${fontSize * (24 / 14)}pt`, lineHeight: 1.25 }} className="mb-[0.55em] mt-[1.4em] font-bold text-slate-900">
       {children}
     </h2>
   ),
   h3: ({ children }) => (
-    <h3 style={{ fontSize: `${fontSize * (20 / 14)}pt` }} className="mb-3 mt-6 font-semibold text-slate-900">
+    <h3 style={{ fontSize: `${fontSize * (20 / 14)}pt`, lineHeight: 1.25 }} className="mb-[0.5em] mt-[1.2em] font-semibold text-slate-900">
       {children}
     </h3>
   ),
   h4: ({ children }) => (
-    <h4 style={{ fontSize: `${fontSize * (17 / 14)}pt` }} className="mb-3 mt-5 font-semibold text-slate-900">
+    <h4 style={{ fontSize: `${fontSize * (17 / 14)}pt`, lineHeight: 1.25 }} className="mb-[0.5em] mt-[1.2em] font-semibold text-slate-900">
       {children}
     </h4>
   ),
   h5: ({ children }) => (
-    <h5 style={{ fontSize: `${fontSize * (17 / 14)}pt` }} className="mb-2 mt-4 font-semibold text-slate-900">
+    <h5 style={{ fontSize: `${fontSize * (17 / 14)}pt`, lineHeight: 1.25 }} className="mb-[0.5em] mt-[1.2em] font-semibold text-slate-900">
       {children}
     </h5>
   ),
   h6: ({ children }) => (
-    <h6 style={{ fontSize: `${fontSize * (17 / 14)}pt` }} className="mb-2 mt-4 font-semibold text-slate-900">
+    <h6 style={{ fontSize: `${fontSize * (17 / 14)}pt`, lineHeight: 1.25 }} className="mb-[0.5em] mt-[1.2em] font-semibold text-slate-900">
       {children}
     </h6>
   ),
-  p: ({ children }) => <p className="mb-4 leading-7">{children}</p>,
+  p: ({ children }) => <p style={{ marginBottom: "0.8em" }}>{children}</p>,
   ul: ({ children }) => (
-    <ul className="mb-5 list-disc space-y-1 pl-7">{children}</ul>
+    <ul className="mb-[1em] list-disc space-y-[0.25em] pl-[1.85em]">{children}</ul>
   ),
   ol: ({ children }) => (
-    <ol className="mb-5 list-decimal space-y-1 pl-7">{children}</ol>
+    <ol className="mb-[1em] list-decimal space-y-[0.25em] pl-[1.85em]">{children}</ol>
   ),
   li: ({ children }) => <li className="pl-1">{children}</li>,
   blockquote: ({ children }) => (
-    <blockquote className="my-5 border-l-4 border-cyan-500 bg-slate-100 py-2 pl-4 text-slate-600">
+    <blockquote className="my-[1em] border-l-4 border-cyan-500 bg-slate-100 py-[0.7em] pl-[1em] text-slate-600">
       {children}
     </blockquote>
   ),
@@ -155,12 +154,12 @@ const markdownPreviewComponents = (fontSize: number): Components => ({
     </code>
   ),
   pre: ({ children }) => (
-    <pre style={{ fontSize: `${fontSize}pt` }} className="mb-5 overflow-x-auto rounded-lg bg-slate-900 p-4 font-mono leading-6 text-slate-100 [&_code]:bg-transparent [&_code]:p-0 [&_code]:text-inherit">
+    <pre style={{ fontSize: `${fontSize}pt`, lineHeight: 1.5 }} className="mb-[1em] overflow-x-auto rounded-lg bg-slate-900 p-[0.85em] font-mono text-slate-100 [&_code]:bg-transparent [&_code]:p-0 [&_code]:text-inherit">
       {children}
     </pre>
   ),
   table: ({ children }) => (
-    <div className="mb-5 overflow-x-auto">
+    <div className="mb-[1em] overflow-x-auto">
       <table style={{ fontSize: `${fontSize}pt` }} className="w-full border-collapse text-left">
         {children}
       </table>
@@ -286,6 +285,7 @@ function DocumentConverterContent({
 }: DocumentConverterProps) {
   const fileRef = useRef<HTMLInputElement>(null);
   const fileReadIdRef = useRef(0);
+  const fontUpdateIdRef = useRef(0);
 
   const [file, setFile] = useState<File | null>(null);
   const [customMarkdownMode, setCustomMarkdownMode] = useState(
@@ -300,6 +300,7 @@ function DocumentConverterContent({
   const [previewMarkdown, setPreviewMarkdown] = useState<string | null>(null);
   const [previewLoading, setPreviewLoading] = useState(false);
   const [fontSize, setFontSize] = useState(14);
+  const [fontSizeUpdating, setFontSizeUpdating] = useState(false);
   const [result, setResult] = useState("");
   const [generatedFile, setGeneratedFile] = useState<GeneratedDocument | null>(null);
   const [busy, setBusy] = useState(false);
@@ -317,6 +318,8 @@ function DocumentConverterContent({
 
   const selectFile = (selectedFile?: File) => {
     const readId = ++fileReadIdRef.current;
+    fontUpdateIdRef.current += 1;
+    setFontSizeUpdating(false);
     setError("");
     setSuccess("");
     setResult("");
@@ -385,6 +388,8 @@ function DocumentConverterContent({
 
   const startCustomMarkdown = () => {
     fileReadIdRef.current += 1;
+    fontUpdateIdRef.current += 1;
+    setFontSizeUpdating(false);
     setFile(null);
     setInputFormat("md");
     setCustomMarkdownMode(true);
@@ -406,6 +411,8 @@ function DocumentConverterContent({
   };
 
   const loadMarkdownExample = () => {
+    fontUpdateIdRef.current += 1;
+    setFontSizeUpdating(false);
     setPreviewMarkdown(EXAMPLE_MARKDOWN);
     setResult("");
     setGeneratedFile(null);
@@ -415,6 +422,8 @@ function DocumentConverterContent({
   };
 
   const editMarkdown = (markdown: string) => {
+    fontUpdateIdRef.current += 1;
+    setFontSizeUpdating(false);
     setPreviewMarkdown(markdown);
     setResult("");
     setGeneratedFile(null);
@@ -438,6 +447,8 @@ function DocumentConverterContent({
     }
 
     setBusy(true);
+    fontUpdateIdRef.current += 1;
+    setFontSizeUpdating(false);
     setError("");
     setSuccess("");
     setResult("");
@@ -474,7 +485,10 @@ function DocumentConverterContent({
   };
 
   const updateFontSize = async (nextFontSize: number) => {
-    const clampedFontSize = Math.min(32, Math.max(8, nextFontSize));
+    const minFontSize = outputFormat === "pptx" ? 10 : 8;
+    const maxFontSize = outputFormat === "pptx" ? 24 : 32;
+    const clampedFontSize = Math.min(maxFontSize, Math.max(minFontSize, nextFontSize));
+    const updateId = ++fontUpdateIdRef.current;
     setFontSize(clampedFontSize);
 
     if (
@@ -484,13 +498,13 @@ function DocumentConverterContent({
       !outputFormat ||
       outputFormat === "md"
     ) {
+      setFontSizeUpdating(false);
       return;
     }
 
-    setBusy(true);
+    setFontSizeUpdating(true);
     setError("");
     setSuccess("");
-    setGeneratedFile(null);
 
     try {
       const markdown =
@@ -501,24 +515,28 @@ function DocumentConverterContent({
         outputFormat,
         clampedFontSize
       );
+      if (updateId !== fontUpdateIdRef.current) return;
       setResult(markdown);
       setGeneratedFile(converted);
       setSuccess(`Output regenerated at ${clampedFontSize} pt.`);
     } catch (err) {
+      if (updateId !== fontUpdateIdRef.current) return;
       console.error("Font-size update error:", err);
-      setResult("");
+      setGeneratedFile(null);
       setError(
         err instanceof Error
           ? err.message
           : "Could not regenerate the document at the selected font size."
       );
     } finally {
-      setBusy(false);
+      if (updateId === fontUpdateIdRef.current) {
+        setFontSizeUpdating(false);
+      }
     }
   };
 
   const handleDownload = async () => {
-    if (!file && !customMarkdownMode) return;
+    if ((!file && !customMarkdownMode) || fontSizeUpdating) return;
     const sourceFilename = file?.name ?? "custom-markdown.md";
 
     if (generatedFile) {
@@ -545,6 +563,8 @@ function DocumentConverterContent({
 
   const reset = () => {
     fileReadIdRef.current += 1;
+    fontUpdateIdRef.current += 1;
+    setFontSizeUpdating(false);
     setFile(null);
     setCustomMarkdownMode(initialInputFormat === "md");
     setPreviewMarkdown(null);
@@ -603,8 +623,8 @@ function DocumentConverterContent({
 
   const renderMarkdown = (markdown: string) => (
     <article
-      style={{ fontSize: `${fontSize}pt` }}
-      className="break-words font-sans leading-relaxed text-slate-700"
+      style={{ fontSize: `${fontSize}pt`, lineHeight: 1.5 }}
+      className="break-words font-sans text-slate-700"
     >
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks]}
@@ -617,29 +637,25 @@ function DocumentConverterContent({
 
   const renderFontSizeControls = () => (
     <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-white px-2 py-1 text-slate-700">
-      <button
-        type="button"
-        onClick={() => void updateFontSize(fontSize - 1)}
-        disabled={fontSize <= 8 || busy}
-        aria-label="Decrease font size"
-        title="Decrease font size"
-        className="rounded p-1 transition hover:bg-slate-100 disabled:opacity-40"
-      >
-        <Minus size={15} />
-      </button>
-      <span className="min-w-14 text-center text-xs font-semibold" aria-live="polite">
-        {fontSize} pt
-      </span>
-      <button
-        type="button"
-        onClick={() => void updateFontSize(fontSize + 1)}
-        disabled={fontSize >= 32 || busy}
-        aria-label="Increase font size"
-        title="Increase font size"
-        className="rounded p-1 transition hover:bg-slate-100 disabled:opacity-40"
-      >
-        <Plus size={15} />
-      </button>
+      <label className="whitespace-nowrap text-xs font-semibold">
+        Font size
+        <select
+          aria-label="Output font size"
+          value={fontSize}
+          onChange={(event) => void updateFontSize(Number(event.target.value))}
+          disabled={busy}
+          className="ml-2 rounded border-0 bg-transparent py-1 pr-1 text-sm font-semibold text-slate-800 outline-none focus:ring-2 focus:ring-cyan-500 disabled:opacity-50"
+        >
+          {Array.from(
+            { length: (outputFormat === "pptx" ? 24 : 32) - (outputFormat === "pptx" ? 10 : 8) + 1 },
+            (_, index) => index + (outputFormat === "pptx" ? 10 : 8),
+          ).map((size) => (
+            <option key={size} value={size}>
+              {size} pt
+            </option>
+          ))}
+        </select>
+      </label>
     </div>
   );
 
@@ -852,7 +868,13 @@ function DocumentConverterContent({
               <select
                 value={outputFormat}
                 onChange={(e) => {
-                  setOutputFormat(e.target.value as Format);
+                  fontUpdateIdRef.current += 1;
+                  setFontSizeUpdating(false);
+                  const nextFormat = e.target.value as Format;
+                  setOutputFormat(nextFormat);
+                  if (nextFormat === "pptx") {
+                    setFontSize((current) => Math.min(24, Math.max(10, current)));
+                  }
                   setResult("");
                   setGeneratedFile(null);
                   setSuccess("");
@@ -913,8 +935,8 @@ function DocumentConverterContent({
                     </span>
                   </div>
                   <pre
-                    style={{ fontSize: `${fontSize}pt` }}
-                    className={`overflow-auto whitespace-pre-wrap break-words p-4 font-mono leading-relaxed text-slate-300 ${outputPreviewFullscreen ? "min-h-0 flex-1" : "max-h-[34rem]"}`}
+                    style={{ fontSize: `${fontSize}pt`, lineHeight: 1.5 }}
+                    className={`overflow-auto whitespace-pre-wrap break-words p-4 font-mono text-slate-300 ${outputPreviewFullscreen ? "min-h-0 flex-1" : "max-h-[34rem]"}`}
                   >
                     {previewMarkdown}
                   </pre>
@@ -929,7 +951,11 @@ function DocumentConverterContent({
                         {formatNames[outputFormat]} preview
                       </h3>
                       <p className="mt-1 text-xs text-slate-400">
-                        {extensions[outputFormat]} · {outputFormat === "md" ? "Font size adjusts this preview only" : "Font size is applied to the downloaded file"}
+                        {extensions[outputFormat]} · {fontSizeUpdating
+                          ? "Updating download…"
+                          : outputFormat === "md"
+                            ? "Font size adjusts this preview only"
+                            : "Font size is applied to the downloaded file"}
                       </p>
                     </div>
                     <div className="flex items-center gap-2">
@@ -1043,7 +1069,7 @@ function DocumentConverterContent({
                   <button
                     type="button"
                     onClick={handleDownload}
-                    disabled={busy || (inputFormat === "md" && !generatedFile)}
+                    disabled={busy || fontSizeUpdating || (inputFormat === "md" && !generatedFile)}
                     className="flex items-center justify-center gap-2 rounded-lg bg-cyan-400 px-4 py-2.5 text-sm font-semibold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <Download size={17} />
@@ -1141,7 +1167,7 @@ function DocumentConverterContent({
             <div className="mx-auto min-h-full w-full max-w-5xl rounded-xl border border-slate-200/10 bg-[#f8fafc] px-6 py-8 text-slate-800 shadow-2xl sm:px-12 sm:py-12">
               {outputFormat === "md" ? (
                 previewMode === "source" ? (
-                  <pre style={{ fontSize: `${fontSize}pt` }} className="whitespace-pre-wrap break-words font-mono leading-7 text-slate-700">
+                  <pre style={{ fontSize: `${fontSize}pt`, lineHeight: 1.5 }} className="whitespace-pre-wrap break-words font-mono text-slate-700">
                     {result}
                   </pre>
                 ) : (
@@ -1161,7 +1187,7 @@ function DocumentConverterContent({
             <button
               type="button"
               onClick={handleDownload}
-              disabled={busy || (inputFormat === "md" && !generatedFile)}
+              disabled={busy || fontSizeUpdating || (inputFormat === "md" && !generatedFile)}
               className="flex items-center justify-center gap-2 rounded-lg bg-cyan-400 px-5 py-2.5 text-sm font-bold text-slate-950 transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {busy ? <RefreshCw size={17} className="animate-spin" /> : <Download size={17} />}
