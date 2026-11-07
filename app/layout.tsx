@@ -1,24 +1,24 @@
 
+import type { Metadata } from "next";
 import "./globals.css";
+import { ThemeProvider } from "./components/ThemeProvider";
 
-export const metadata = {
-  title: "eSparks Document Conversion | Convert Documents Online",
-  description:
-    "Convert Word, PDF, PowerPoint and Markdown documents quickly and securely with eSparks Document Conversion.",
-  icons: {
-    icon: "/favicon.ico",
-  },
+export const metadata: Metadata = {
+  title: "eSparks Document Conversion",
+  description: "Simple and secure document conversion tools."
 };
 
 export default function RootLayout({
-  children,
+  children
 }: Readonly<{
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body className="flex min-h-dvh flex-col">
-        {children}
+    <html lang="en" suppressHydrationWarning>
+      <body>
+        <ThemeProvider>
+          {children}
+        </ThemeProvider>
       </body>
     </html>
   );

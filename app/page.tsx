@@ -6,6 +6,7 @@ import { Suspense } from "react";
 import { useSearchParams } from "next/navigation";
 import Navbar from "./components/Navbar";
 import Hero from "./components/Hero";
+import Footer from "./components/Footer";
 
 const HowItWorks = dynamic(
   () => import("./components/HowItWorks"),
@@ -15,11 +16,6 @@ const HowItWorks = dynamic(
 const About = dynamic(
   () => import("./components/About"),
   { loading: () => <div className="min-h-[300px]" /> }
-);
-
-const Footer = dynamic(
-  () => import("./components/Footer"),
-  { loading: () => <div className="min-h-[150px]" /> }
 );
 
 const converters = {
@@ -70,7 +66,7 @@ function HomeContent() {
     : undefined;
 
   return (
-    <div className="flex min-h-screen min-h-dvh flex-col overflow-x-clip bg-[#070b14] text-white">
+    <div className="home-page flex min-h-dvh flex-col overflow-x-clip">
       <Navbar />
 
       <main className="flex-1">
@@ -112,7 +108,7 @@ export default function Home() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen min-h-dvh bg-[#070b14]" />
+        <div className="min-h-screen min-h-dvh bg-[var(--background)]" />
       }
     >
       <HomeContent />
