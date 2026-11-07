@@ -6,7 +6,8 @@ const MAX_FILE_SIZE = 20 * 1024 * 1024;
 function escapeMarkdown(text: string): string {
   return text
     .replace(/\\/g, "\\\\")
-    .replace(/([*_`\[\]])/g, "\\$1");
+    .replace(/([*_`\[\]])/g, "\\$1")
+    .replace(/\b(https?|ftp|mailto):\/\//gi, "$1&#58;//");
 }
 
 function escapeTableCell(text: string): string {
@@ -15,39 +16,152 @@ function escapeTableCell(text: string): string {
     .replace(/\r?\n/g, "<br>");
 }
 
+type TableCellMetadata = {
+  text: string;
+  colspan?: number;
+  rowspan?: number;
+  merged?: boolean;
+};
+
+type TableMetadata = {
+  rows: TableCellMetadata[][];
+};
+
+function encodeMetadata(value: unknown): string {
+  const bytes = new TextEncoder().encode(JSON.stringify(value));
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+function getTableMetadata(table: Element): TableMetadata {
+  const rows = getElementsByLocalName(table, "tr").map((row) => {
+    const cells = getElementsByLocalName(row, "tc");
+    const getCellAttribute = (cell: Element, name: string) => {
+      const properties = getElementsByLocalName(cell, "tcPr")[0];
+      return cell.getAttribute(name) || properties?.getAttribute(name) || "";
+    };
+    const isMerged = (cell: Element) => {
+      const hMerge = getCellAttribute(cell, "hMerge").toLowerCase();
+      const vMerge = getCellAttribute(cell, "vMerge").toLowerCase();
+      return (
+        hMerge === "1" ||
+        hMerge === "true" ||
+        vMerge === "1" ||
+        vMerge === "true"
+      );
+    };
+    return cells.flatMap((cell, index) => {
+      const colspan = Number(getCellAttribute(cell, "gridSpan") || 1);
+      const rowspan = Number(getCellAttribute(cell, "rowSpan") || 1);
+      const text = getElementsByLocalName(cell, "t")
+        .map((node) => node.textContent ?? "")
+        .join("");
+      if (isMerged(cell)) return [{ text: "", merged: true }];
+      const mergedPlaceholders = cells.slice(index + 1, index + colspan);
+      const hasMergePlaceholders =
+        colspan > 1 &&
+        mergedPlaceholders.length === colspan - 1 &&
+        mergedPlaceholders.every(isMerged);
+      const metadata: TableCellMetadata = {
+        text,
+        ...(colspan > 1 ? { colspan } : {}),
+        ...(rowspan > 1 ? { rowspan } : {}),
+      };
+      return [
+        metadata,
+        ...(!hasMergePlaceholders
+          ? Array.from({ length: Math.max(0, colspan - 1) }, () => ({
+              text: "",
+              merged: true,
+            }))
+          : []),
+      ];
+    });
+  });
+  return { rows };
+}
+
 function getElementsByLocalName(element: Element | Document, name: string): Element[] {
   return Array.from(element.getElementsByTagName("*")).filter(
     (child) => child.localName === name
   );
 }
 
+function getChildElements(element: Element): Element[] {
+  return Array.from(element.childNodes).filter(
+    (child): child is Element => child.nodeType === 1,
+  );
+}
+
 function getRelationshipId(element: Element): string | null {
-  return (
+  return [
     element.getAttributeNS(
       "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
       "id"
-    ) ??
-    element.getAttribute("r:id")
-  );
+    ),
+    element.getAttributeNS(
+      "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+      "embed"
+    ),
+    element.getAttribute("r:id"),
+    element.getAttribute("r:embed"),
+  ].find((value) => value !== null && value !== "") ?? null;
+}
+
+function getColor(
+  fill: Element | undefined,
+  themeColors: Map<string, string>,
+): string | undefined {
+  if (!fill) return undefined;
+  for (const color of getChildElements(fill)) {
+    const value =
+      color.localName === "sysClr"
+        ? color.getAttribute("lastClr") || color.getAttribute("val")
+        : color.getAttribute("val");
+    if (!value) continue;
+    if (
+      color.localName === "srgbClr" ||
+      color.localName === "sysClr"
+    ) {
+      return /^[0-9a-f]{6}$/i.test(value) ? value : undefined;
+    }
+    if (color.localName === "schemeClr") {
+      return themeColors.get(value);
+    }
+  }
+  return undefined;
 }
 
 function getParagraphMarkdown(
   paragraph: Element,
-  relationships: Map<string, string>
+  relationships: Map<string, string>,
+  themeColors: Map<string, string>,
+  shapeLevel = 0,
 ): {
   text: string;
   bullet: boolean;
+  ordered: boolean;
+  numberingStart: number;
   level: number;
   alignment: "left" | "center" | "right" | "justify" | null;
 } {
   const paragraphProperties = getElementsByLocalName(paragraph, "pPr")[0];
+  const paragraphLevel = Number(paragraphProperties?.getAttribute("lvl") ?? 0);
   const level = Math.min(
-    Math.max(Number(paragraphProperties?.getAttribute("lvl") ?? 0), 0),
-    5
+    5,
+    Math.max(Number.isFinite(paragraphLevel) ? paragraphLevel : 0, shapeLevel, 0),
   );
+  const autoNumber = getElementsByLocalName(paragraph, "buAutoNum")[0];
+  const ordered = Boolean(autoNumber);
   const bullet =
     !!getElementsByLocalName(paragraph, "buChar").length ||
-    !!getElementsByLocalName(paragraph, "buAutoNum").length;
+    ordered ||
+    level > 0;
+  const rawNumberingStart = Number(autoNumber?.getAttribute("startAt") ?? 1);
+  const numberingStart = Number.isFinite(rawNumberingStart)
+    ? Math.max(1, rawNumberingStart)
+    : 1;
   const alignmentValue = paragraphProperties?.getAttribute("algn");
   const alignment =
     alignmentValue === "ctr"
@@ -57,60 +171,85 @@ function getParagraphMarkdown(
         : alignmentValue === "just" || alignmentValue === "dist"
           ? "justify"
           : null;
-  const runs = getElementsByLocalName(paragraph, "r");
-  const text = runs.length
-    ? runs
-        .map((run) => {
-          const value = getElementsByLocalName(run, "t")
-            .map((node) => node.textContent ?? "")
-            .join("");
-          if (!value) return "";
+  const formatRun = (run: Element) => {
+    const value = getElementsByLocalName(run, "t")
+      .map((node) => node.textContent ?? "")
+      .join("");
+    if (!value) return "";
 
-          const properties = getElementsByLocalName(run, "rPr")[0];
-          const bold = properties?.getAttribute("b") === "1";
-          const italic = properties?.getAttribute("i") === "1";
-          const underlineValue = properties?.getAttribute("u");
-          const underline = Boolean(
-            underlineValue && underlineValue !== "none"
-          );
-          const fontSize = Number(properties?.getAttribute("sz")) / 100;
-          const size = Number.isFinite(fontSize) && fontSize > 0
-            ? fontSize
-            : undefined;
-          const solidFill = properties
-            ? getElementsByLocalName(properties, "solidFill")[0]
-            : undefined;
-          const color = solidFill
-            ? getElementsByLocalName(solidFill, "srgbClr")[0]?.getAttribute("val")
-            : undefined;
-          const escaped = escapeMarkdown(value);
-          const relationshipId = properties
-            ? getRelationshipId(getElementsByLocalName(properties, "hlinkClick")[0] ?? properties)
-            : null;
-          const href = relationshipId
-            ? relationships.get(relationshipId)
-            : undefined;
-          let formatted = underline ? `<u>${escaped}</u>` : escaped;
-          if (color && /^[0-9a-f]{6}$/i.test(color)) {
-            formatted = `<span data-pptx-color="#${color.toUpperCase()}"${size ? ` data-pptx-font-size="${size}"` : ""}>${formatted}</span>`;
-          } else if (size) {
-            formatted = `<span data-pptx-font-size="${size}">${formatted}</span>`;
-          }
-          const linkedText = href && /^(https?:|mailto:)/i.test(href)
-            ? `[${formatted}](<${href.replace(/>/g, "%3E")}>)`
-            : formatted;
+    const properties = getElementsByLocalName(run, "rPr")[0];
+    const bold = ["1", "true"].includes(
+      properties?.getAttribute("b")?.toLowerCase() ?? "",
+    );
+    const italic = ["1", "true"].includes(
+      properties?.getAttribute("i")?.toLowerCase() ?? "",
+    );
+    const underlineValue = properties?.getAttribute("u");
+    const underline = Boolean(underlineValue && underlineValue !== "none");
+    const fontSize = Number(properties?.getAttribute("sz")) / 100;
+    const size =
+      Number.isFinite(fontSize) && fontSize > 0 ? fontSize : undefined;
+    const solidFill = properties
+      ? getElementsByLocalName(properties, "solidFill")[0]
+      : undefined;
+    const color = getColor(solidFill, themeColors);
+    const escaped = escapeMarkdown(value);
+    const relationshipId = properties
+      ? getRelationshipId(
+          getElementsByLocalName(properties, "hlinkClick")[0] ?? properties,
+        )
+      : null;
+    const href = relationshipId ? relationships.get(relationshipId) : undefined;
+    let formatted = underline ? `<u>${escaped}</u>` : escaped;
+    if (color && /^[0-9a-f]{6}$/i.test(color)) {
+      formatted = `<span data-pptx-color="#${color.toUpperCase()}"${size ? ` data-pptx-font-size="${size}"` : ""}>${formatted}</span>`;
+    } else if (size) {
+      formatted = `<span data-pptx-font-size="${size}">${formatted}</span>`;
+    }
+    const linkedText =
+      href && /^(https?:|mailto:)/i.test(href)
+        ? `[${formatted}](<${href.replace(/>/g, "%3E")}>)`
+        : formatted;
 
-          if (bold && italic) return `***${linkedText}***`;
-          if (bold) return `**${linkedText}**`;
-          if (italic) return `*${linkedText}*`;
-          return linkedText;
-        })
-        .join("")
+    if (bold && italic) return `***${linkedText}***`;
+    if (bold) return `**${linkedText}**`;
+    if (italic) return `*${linkedText}*`;
+    return linkedText;
+  };
+  const paragraphParts = getChildElements(paragraph).flatMap((node) => {
+    if (node.localName === "br") return ["  \n"];
+    if (node.localName === "r" || node.localName === "fld") {
+      const formatted = formatRun(node);
+      return formatted ? [formatted] : [];
+    }
+    return [];
+  });
+  const text = paragraphParts.length
+    ? paragraphParts.join("")
     : getElementsByLocalName(paragraph, "t")
         .map((node) => escapeMarkdown(node.textContent ?? ""))
         .join("");
 
-  return { text: text.trim(), bullet, level, alignment };
+  return {
+    text: text.replace(/^[ \t]+|[ \t]+$/g, ""),
+    bullet,
+    ordered,
+    numberingStart,
+    level,
+    alignment,
+  };
+}
+
+function getPlainParagraphText(paragraph: Element): string {
+  return getChildElements(paragraph)
+    .map((node) => {
+      if (node.localName === "br") return "\n";
+      if (node.localName !== "r" && node.localName !== "fld") return "";
+      return getElementsByLocalName(node, "t")
+        .map((text) => text.textContent ?? "")
+        .join("");
+    })
+    .join("");
 }
 
 function getPlaceholderType(shape: Element): string | null {
@@ -118,13 +257,11 @@ function getPlaceholderType(shape: Element): string | null {
 }
 
 function getTableMarkdown(table: Element): string {
-  const rows = getElementsByLocalName(table, "tr").map((row) =>
-    getElementsByLocalName(row, "tc").map((cell) =>
-      getElementsByLocalName(cell, "t")
-        .map((node) => escapeMarkdown(node.textContent ?? "").trim())
-        .join("")
-        .replace(/\|/g, "\\|")
-    )
+  const metadata = getTableMetadata(table);
+  const rows = metadata.rows.map((row) =>
+    row.map((cell) =>
+      escapeTableCell(cell.text.trim()),
+    ),
   );
 
   if (!rows.length) return "";
@@ -135,11 +272,121 @@ function getTableMarkdown(table: Element): string {
   );
   const separator = normalizedRows[0].map(() => "---");
 
+  const metadataComment = `<!-- pptx-table:${encodeMetadata(metadata)} -->`;
   return [
+    metadataComment,
+    "",
     `| ${normalizedRows[0].join(" | ")} |`,
     `| ${separator.join(" | ")} |`,
     ...normalizedRows.slice(1).map((row) => `| ${row.join(" | ")} |`),
   ].join("\n");
+}
+
+function getShapeMetadata(
+  shape: Element,
+  slideWidth: number,
+  slideHeight: number,
+  themeColors: Map<string, string>,
+): Record<string, unknown> | null {
+  const geometry = getElementsByLocalName(shape, "prstGeom")[0];
+  const preset = geometry?.getAttribute("prst");
+  const supportedShapes: Record<string, string> = {
+    rect: "rect",
+    roundRect: "roundRect",
+    ellipse: "ellipse",
+    diamond: "diamond",
+    triangle: "triangle",
+    hexagon: "hexagon",
+    pentagon: "pentagon",
+    parallelogram: "parallelogram",
+    trapezoid: "trapezoid",
+  };
+  if (!preset || !supportedShapes[preset]) return null;
+
+  const shapeProperties = getElementsByLocalName(shape, "spPr")[0];
+  if (!shapeProperties) return null;
+  const transform = getElementsByLocalName(shapeProperties, "xfrm")[0];
+  const offset = transform && getElementsByLocalName(transform, "off")[0];
+  const extent = transform && getElementsByLocalName(transform, "ext")[0];
+  const x = Number(offset?.getAttribute("x"));
+  const y = Number(offset?.getAttribute("y"));
+  const width = Number(extent?.getAttribute("cx"));
+  const height = Number(extent?.getAttribute("cy"));
+  if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) {
+    return null;
+  }
+
+  const fill = getElementsByLocalName(shapeProperties, "solidFill")[0];
+  const fillColor = getColor(fill, themeColors);
+  const line = getElementsByLocalName(shapeProperties, "ln")[0];
+  const lineFill = line && getElementsByLocalName(line, "solidFill")[0];
+  const lineColor = getColor(lineFill, themeColors);
+  if (!fillColor && !lineColor) return null;
+  const label = getElementsByLocalName(shape, "t")
+    .map((node) => node.textContent ?? "")
+    .join("");
+
+  return {
+    type: supportedShapes[preset],
+    x: (x / slideWidth) * 13.333,
+    y: (y / slideHeight) * 7.5,
+    w: (width / slideWidth) * 13.333,
+    h: (height / slideHeight) * 7.5,
+    ...(fillColor && /^[0-9a-f]{6}$/i.test(fillColor)
+      ? { fill: fillColor.toUpperCase() }
+      : {}),
+    ...(lineColor && /^[0-9a-f]{6}$/i.test(lineColor)
+      ? { line: lineColor.toUpperCase() }
+      : {}),
+    ...(label ? { label } : {}),
+  };
+}
+
+function getPictureMarkdown(
+  picture: Element,
+  relationships: Map<string, string>,
+  relationshipTypes: Map<string, string>,
+  zip: JSZip,
+  slidePath: string,
+): Promise<string> {
+  const imageId = getRelationshipId(getElementsByLocalName(picture, "blip")[0] ?? picture);
+  if (!imageId) return Promise.resolve("");
+  const target = relationships.get(imageId);
+  if (!target || !relationshipTypes.get(imageId)?.endsWith("/image")) {
+    return Promise.resolve("");
+  }
+  const imagePath = resolvePackagePath(slidePath, target);
+  const image = zip.file(imagePath);
+  if (!image) return Promise.resolve("");
+  const extension = imagePath.split(".").pop()?.toLowerCase();
+  const mimeTypes: Record<string, string> = {
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    gif: "image/gif",
+  };
+  const mimeType = extension ? mimeTypes[extension] : undefined;
+  if (!mimeType) {
+    return Promise.resolve("_An embedded image uses an unsupported format and could not be exported._");
+  }
+  const altText =
+    getElementsByLocalName(picture, "cNvPr")[0]?.getAttribute("descr") ||
+    getElementsByLocalName(picture, "cNvPr")[0]?.getAttribute("name") ||
+    "Embedded image";
+  return image.async("base64").then(
+    (base64) => `![${escapeMarkdown(altText)}](data:${mimeType};base64,${base64})`,
+  );
+}
+
+function getThemeColors(xml: Document): Map<string, string> {
+  const colors = new Map<string, string>();
+  const scheme = getElementsByLocalName(xml, "clrScheme")[0];
+  if (!scheme) return colors;
+  for (const entry of getChildElements(scheme)) {
+    const color = getColor(entry, new Map());
+    if (color) colors.set(entry.localName, color.toUpperCase());
+  }
+  return colors;
 }
 
 function resolvePackagePath(baseFile: string, target: string): string {
@@ -392,6 +639,13 @@ export async function convertPowerPointToMarkdown(
     );
 
     const relationshipMap = getRelationships(relationshipsXml);
+    const themeFile = zip.file("ppt/theme/theme1.xml");
+    const themeColors = themeFile
+      ? getThemeColors(parser.parseFromString(await themeFile.async("text"), "application/xml"))
+      : new Map<string, string>();
+    const slideSize = getElementsByLocalName(presentationXml, "sldSz")[0];
+    const slideWidth = Number(slideSize?.getAttribute("cx") ?? 9144000);
+    const slideHeight = Number(slideSize?.getAttribute("cy") ?? 5143500);
 
     const slideIds = Array.from(
       presentationXml.getElementsByTagName("p:sldId")
@@ -447,26 +701,70 @@ export async function convertPowerPointToMarkdown(
 
       const slideLines: string[] = [];
       let headingAdded = false;
+      let lastBulletLine = -1;
 
       for (const shape of shapes) {
         const placeholderType = getPlaceholderType(shape);
         const shapeName =
           getElementsByLocalName(shape, "cNvPr")[0]?.getAttribute("name");
+        const generatedListLevel = shapeName?.match(
+          /^Document Conversion List Item level (\d+)$/,
+        );
         if (
           placeholderType === "sldNum" ||
-          shapeName === "Document Conversion Slide Number"
+          shapeName === "Document Conversion Slide Number" ||
+          (shapeName?.startsWith("Document Conversion ") && !generatedListLevel)
         ) {
           continue;
         }
         const isTitlePlaceholder =
           placeholderType === "title" || placeholderType === "ctrTitle";
         const isSubtitlePlaceholder = placeholderType === "subTitle";
+        const shapeMetadata = getShapeMetadata(
+          shape,
+          slideWidth,
+          slideHeight,
+          themeColors,
+        );
+        if (shapeMetadata) {
+          slideLines.push(
+            "```pptx-shape",
+            JSON.stringify(shapeMetadata),
+            "```",
+          );
+          lastBulletLine = -1;
+          continue;
+        }
         const paragraphs = getElementsByLocalName(shape, "p");
+        const fonts = getElementsByLocalName(shape, "latin")
+          .map((node) => node.getAttribute("typeface") ?? "")
+          .filter(Boolean);
+        const isCodeShape =
+          fonts.length > 0 &&
+          fonts.every((font) => /^(consolas|courier new|menlo|monaco)$/i.test(font));
+        if (isCodeShape && paragraphs.length) {
+          const code = paragraphs
+            .map(getPlainParagraphText)
+            .join("\n");
+          const fence = "`".repeat(Math.max(3, ...Array.from(code.matchAll(/`+/g), (match) => match[0].length + 1)));
+          slideLines.push(`${fence}text`, code, fence);
+          lastBulletLine = -1;
+          continue;
+        }
 
         for (const [paragraphIndex, paragraph] of paragraphs.entries()) {
-          const { text, bullet, level, alignment } = getParagraphMarkdown(
+          const {
+            text,
+            bullet,
+            ordered,
+            numberingStart,
+            level,
+            alignment,
+          } = getParagraphMarkdown(
             paragraph,
-            slideRelationships
+            slideRelationships,
+            themeColors,
+            Number(generatedListLevel?.[1] ?? 0),
           );
 
           if (!text) continue;
@@ -474,19 +772,32 @@ export async function convertPowerPointToMarkdown(
           if (isTitlePlaceholder && paragraphIndex === 0) {
             slideLines.push(`# ${text}`);
             headingAdded = true;
+            lastBulletLine = -1;
           } else if (isSubtitlePlaceholder && paragraphIndex === 0) {
             slideLines.push(`## ${text}`);
             headingAdded = true;
+            lastBulletLine = -1;
           } else if (!hasTitlePlaceholder && !headingAdded && !bullet) {
             slideLines.push(`# ${text}`);
             headingAdded = true;
+            lastBulletLine = -1;
           } else {
             if (alignment) {
               slideLines.push(`<!-- pptx-align:${alignment} -->`);
             }
-            slideLines.push(
-              bullet ? `${"  ".repeat(level)}- ${text}` : text
-            );
+            if (bullet) {
+              const marker = ordered ? `${numberingStart}.` : "-";
+              const bulletLine = `${"  ".repeat(level)}${marker} ${text}`;
+              if (lastBulletLine >= 0) {
+                slideLines[lastBulletLine] += `\n${bulletLine}`;
+              } else {
+                slideLines.push(bulletLine);
+                lastBulletLine = slideLines.length - 1;
+              }
+            } else {
+              slideLines.push(text);
+              lastBulletLine = -1;
+            }
           }
         }
       }
@@ -495,6 +806,19 @@ export async function convertPowerPointToMarkdown(
         .map(getTableMarkdown)
         .filter(Boolean);
       if (tables.length) slideLines.push(...tables);
+      if (tables.length) lastBulletLine = -1;
+
+      const pictures = getElementsByLocalName(slideXml, "pic");
+      for (const picture of pictures) {
+        const markdown = await getPictureMarkdown(
+          picture,
+          slideRelationships,
+          slideRelationshipTypes,
+          zip,
+          slidePath,
+        );
+        if (markdown) slideLines.push(markdown);
+      }
 
       const charts: string[] = [];
       for (const [id, chartTarget] of slideRelationships) {

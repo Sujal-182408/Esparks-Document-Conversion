@@ -38,7 +38,7 @@ export default function Hero() {
               <span className="text-cyan-400">✓</span> No registration
             </span>
             <span className="flex items-center gap-2">
-              <span className="text-cyan-400">✓</span> Up to 20 MB
+              <span className="text-cyan-400">✓</span> Up to 20 MB (28 MB for Markdown)
             </span>
             <span className="flex items-center gap-2">
               <span className="text-cyan-400">✓</span> Browser processing

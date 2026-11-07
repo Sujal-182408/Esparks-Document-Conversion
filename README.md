@@ -51,12 +51,18 @@ Other chart types are exported as data tables when possible. PowerPoint chart
 data must be present in the chart's embedded XML cache; when it is unavailable,
 the Markdown contains an explicit note instead of silently omitting the chart.
 Hyperlinks with HTTP(S) or `mailto:` URLs are retained in Markdown and restored
-when converting back to PowerPoint. Bold, italic, underline, explicit RGB
-colors, font sizes, and paragraph alignment are represented with Markdown
-emphasis, inline HTML metadata, and alignment comments. The in-app preview
-removes those metadata wrappers while preserving the visible text.
+when converting back to PowerPoint. Plain-text URLs remain plain text. Bold,
+italic, underline, explicit RGB colors, font sizes, paragraph alignment, and
+manual line breaks are represented with Markdown emphasis, inline HTML
+metadata, and alignment comments. Nested lists and code-formatted text are
+preserved.
 
-PowerPoint visual styling and non-text objects such as SmartArt are not fully
-round-tripped. The converter preserves readable text, tables, supported chart
-data, supported links, and selected text styling; it does not guarantee
-pixel-identical slide layouts.
+Embedded PNG, JPEG, and GIF pictures are stored as data URLs in generated
+Markdown. Supported PowerPoint shapes are represented by `pptx-shape` fenced
+blocks, while table merge relationships are stored in an HTML comment beside
+the readable Markdown table. These metadata blocks are used when converting
+back to PowerPoint and should be retained for best fidelity. Unsupported
+visual features, including SmartArt and pixel-identical slide layouts, are not
+guaranteed to round-trip. Markdown files can be up to 28 MB to accommodate the
+Base64 size increase from embedded images; other uploads remain limited to
+20 MB.

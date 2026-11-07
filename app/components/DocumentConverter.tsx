@@ -39,6 +39,40 @@ type GeneratedDocument = {
 };
 
 const validFormats: Format[] = ["docx", "pdf", "pptx", "md"];
+const MAX_FILE_SIZE = 20 * 1024 * 1024;
+const MAX_MARKDOWN_SIZE = 28 * 1024 * 1024;
+const EXAMPLE_MARKDOWN = `# Markdown conversion example
+
+This example shows **bold text**, *italic text*, and inline code such as \`const answer = 42;\`.
+
+## Lists
+
+- Write headings and paragraphs
+- Keep nested lists
+  - Preserve the hierarchy
+
+1. Convert Markdown to Word
+2. Convert Markdown to PDF or PowerPoint
+
+## Code snippet
+
+\`\`\`javascript
+function greet(name) {
+  const message = \`Hello, \${name}!\`;
+  console.log(message);
+}
+
+greet("Markdown");
+\`\`\`
+
+## Table
+
+| Format | Extension |
+| --- | --- |
+| Word | .docx |
+| PDF | .pdf |
+| PowerPoint | .pptx |
+`;
 
 const formatNames: Record<Format, string> = {
   docx: "Word Document",
@@ -253,6 +287,9 @@ function DocumentConverterContent({
   const fileReadIdRef = useRef(0);
 
   const [file, setFile] = useState<File | null>(null);
+  const [customMarkdownMode, setCustomMarkdownMode] = useState(
+    initialInputFormat === "md",
+  );
   const [inputFormat, setInputFormat] = useState<Format | null>(
     initialInputFormat ?? null
   );
@@ -303,8 +340,14 @@ function DocumentConverterContent({
       return;
     }
 
-    if (selectedFile.size > 20 * 1024 * 1024) {
-      setError("File size must not exceed 20 MB.");
+    const maximumSize =
+      detectedFormat === "md" ? MAX_MARKDOWN_SIZE : MAX_FILE_SIZE;
+    if (selectedFile.size > maximumSize) {
+      setError(
+        detectedFormat === "md"
+          ? "Markdown files must not exceed 28 MB."
+          : "File size must not exceed 20 MB.",
+      );
       return;
     }
 
@@ -315,6 +358,7 @@ function DocumentConverterContent({
       return;
     }
 
+    setCustomMarkdownMode(false);
     setFile(selectedFile);
     setInputFormat(detectedFormat);
     setPreviewLoading(true);
@@ -338,14 +382,57 @@ function DocumentConverterContent({
     );
   };
 
+  const startCustomMarkdown = () => {
+    fileReadIdRef.current += 1;
+    setFile(null);
+    setInputFormat("md");
+    setCustomMarkdownMode(true);
+    setPreviewMarkdown("");
+    setPreviewLoading(false);
+    setResult("");
+    setGeneratedFile(null);
+    setError("");
+    setSuccess("");
+    setPreviewOpen(false);
+    setPreviewFullscreen(false);
+    setOutputPreviewFullscreen(false);
+    setOutputFormat((current) =>
+      current && conversionOptions.md.includes(current)
+        ? current
+        : conversionOptions.md[0],
+    );
+    if (fileRef.current) fileRef.current.value = "";
+  };
+
+  const loadMarkdownExample = () => {
+    setPreviewMarkdown(EXAMPLE_MARKDOWN);
+    setResult("");
+    setGeneratedFile(null);
+    setError("");
+    setSuccess("");
+    setPreviewOpen(false);
+  };
+
+  const editMarkdown = (markdown: string) => {
+    setPreviewMarkdown(markdown);
+    setResult("");
+    setGeneratedFile(null);
+    setError("");
+    setSuccess("");
+  };
+
   const handleConvert = async () => {
-    if (!file || !inputFormat || !outputFormat) {
-      setError("Please upload a file and select an output format.");
+    if ((!file && !customMarkdownMode) || !inputFormat || !outputFormat) {
+      setError("Please provide Markdown content or upload a file and select an output format.");
       return;
     }
 
     if (!conversionOptions[inputFormat].includes(outputFormat)) {
       setError("This conversion is not supported.");
+      return;
+    }
+    if (inputFormat === "md" && !previewMarkdown?.trim()) {
+      setError("Enter Markdown content or load the example before converting.");
       return;
     }
 
@@ -358,7 +445,9 @@ function DocumentConverterContent({
     setPreviewFullscreen(false);
 
     try {
-      const markdown = previewMarkdown ?? await extractMarkdown(file, inputFormat);
+      const markdown =
+        previewMarkdown ??
+        (file ? await extractMarkdown(file, inputFormat) : "");
       setPreviewMarkdown(markdown);
       setResult(markdown);
 
@@ -389,7 +478,7 @@ function DocumentConverterContent({
 
     if (
       !generatedFile ||
-      !file ||
+      (!file && !customMarkdownMode) ||
       !inputFormat ||
       !outputFormat ||
       outputFormat === "md"
@@ -403,7 +492,9 @@ function DocumentConverterContent({
     setGeneratedFile(null);
 
     try {
-      const markdown = previewMarkdown ?? await extractMarkdown(file, inputFormat);
+      const markdown =
+        previewMarkdown ??
+        (file ? await extractMarkdown(file, inputFormat) : "");
       const converted = await createMarkdownOutput(
         markdown,
         outputFormat,
@@ -426,15 +517,16 @@ function DocumentConverterContent({
   };
 
   const handleDownload = async () => {
-    if (!file) return;
+    if (!file && !customMarkdownMode) return;
+    const sourceFilename = file?.name ?? "custom-markdown.md";
 
     if (generatedFile) {
       if (generatedFile.format === "docx") {
-        await downloadWordFile(generatedFile.blob, file.name);
+        await downloadWordFile(generatedFile.blob, sourceFilename);
       } else {
         downloadConvertedFile(
           generatedFile.blob,
-          file.name,
+          sourceFilename,
           generatedFile.format === "pdf" ? ".pdf" : ".pptx"
         );
       }
@@ -444,7 +536,7 @@ function DocumentConverterContent({
     if (outputFormat === "md" && result && inputFormat) {
       downloadTextFile(
         result,
-        markdownOutputFilename(file.name, inputFormat),
+        markdownOutputFilename(sourceFilename, inputFormat),
         "text/markdown;charset=utf-8"
       );
     }
@@ -453,6 +545,7 @@ function DocumentConverterContent({
   const reset = () => {
     fileReadIdRef.current += 1;
     setFile(null);
+    setCustomMarkdownMode(initialInputFormat === "md");
     setPreviewMarkdown(null);
     setPreviewLoading(false);
     setResult("");
@@ -600,7 +693,7 @@ function DocumentConverterContent({
                 </p>
 
                 <span className="mt-4 rounded-lg border border-white/10 px-3 py-2 text-[11px] text-slate-300">
-                  DOCX · PDF · PPTX · MD · Maximum 20 MB
+                  DOCX · PDF · PPTX · MD · Maximum 20 MB (28 MB for Markdown)
                 </span>
               </button>
             ) : (
@@ -674,6 +767,15 @@ function DocumentConverterContent({
                 Preparing file preview and text information...
               </p>
             )}
+            {!file && !customMarkdownMode && !initialInputFormat && (
+              <button
+                type="button"
+                onClick={startCustomMarkdown}
+                className="mt-3 rounded-lg border border-cyan-400/30 bg-cyan-400/10 px-4 py-2.5 text-sm font-semibold text-cyan-300 transition hover:border-cyan-400 hover:bg-cyan-400/20"
+              >
+                Or write custom Markdown
+              </button>
+            )}
           </div>
 
           <input
@@ -687,11 +789,58 @@ function DocumentConverterContent({
             }}
           />
 
+          {inputFormat === "md" && (
+            <section className="mb-6" aria-label="Markdown content editor">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-sm font-semibold text-white">
+                    2. Markdown content
+                  </h2>
+                  <p className="mt-1 text-xs text-slate-400">
+                    Edit the uploaded Markdown or write your own content to convert.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={loadMarkdownExample}
+                  disabled={previewLoading || busy}
+                  className="rounded-lg border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-xs font-semibold text-cyan-300 transition hover:border-cyan-400 hover:bg-cyan-400/20 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  Load example
+                </button>
+              </div>
+              <textarea
+                aria-label="Markdown source content"
+                value={previewMarkdown ?? ""}
+                onChange={(event) => editMarkdown(event.target.value)}
+                disabled={previewLoading || busy}
+                placeholder={"# Your document title\n\nWrite Markdown here. Use fenced code blocks for code snippets."}
+                spellCheck={false}
+                rows={14}
+                className="w-full resize-y rounded-xl border border-white/10 bg-slate-950 px-4 py-3 font-mono text-sm leading-6 text-slate-200 outline-none transition placeholder:text-slate-600 focus:border-cyan-400 disabled:cursor-not-allowed disabled:opacity-60"
+              />
+              <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1 text-xs text-slate-400" aria-live="polite">
+                <span>
+                  Text characters:{" "}
+                  <strong className="font-medium text-slate-200">
+                    {Array.from(previewMarkdown ?? "").length.toLocaleString()}
+                  </strong>
+                </span>
+                <span>
+                  Lines:{" "}
+                  <strong className="font-medium text-slate-200">
+                    {(previewMarkdown ?? "").split(/\r\n|\r|\n/).length.toLocaleString()}
+                  </strong>
+                </span>
+              </div>
+            </section>
+          )}
+
           {/* OUTPUT FORMAT */}
           <div className="mb-6">
             <div className="mb-3 flex items-center justify-between">
               <p className="text-sm font-semibold text-white">
-                2. Choose output format
+                {inputFormat === "md" ? "3." : "2."} Choose output format
               </p>
               <span className="text-xs text-slate-500">
                 Step 02
@@ -742,7 +891,7 @@ function DocumentConverterContent({
             )}
           </div>
 
-          {file && inputFormat && outputFormat && previewMarkdown !== null && (
+          {(file || customMarkdownMode) && inputFormat && outputFormat && previewMarkdown !== null && (
             <section
               aria-label="Source and output preview"
               className={`mb-6 ${outputPreviewFullscreen ? "fixed inset-0 z-[90] flex h-dvh flex-col overflow-hidden bg-[#070b14] p-3 sm:p-5" : ""}`}
@@ -754,7 +903,9 @@ function DocumentConverterContent({
                       <h3 className="text-sm font-semibold text-white">
                         {inputFormat === "md" ? "Markdown source" : "Extracted content"}
                       </h3>
-                      <p className="mt-1 text-xs text-slate-500">{file.name}</p>
+                      <p className="mt-1 text-xs text-slate-500">
+                        {file?.name ?? "Custom Markdown"}
+                      </p>
                     </div>
                     <span className="rounded-md bg-white/5 px-2 py-1 text-[11px] font-semibold text-slate-400">
                       {extensions[inputFormat]}
@@ -834,7 +985,14 @@ function DocumentConverterContent({
           <button
             type="button"
             onClick={handleConvert}
-            disabled={!file || !outputFormat || busy || previewLoading || outputOptions.length === 0}
+            disabled={
+              (!file && !customMarkdownMode) ||
+              !outputFormat ||
+              busy ||
+              previewLoading ||
+              outputOptions.length === 0 ||
+              (inputFormat === "md" && !previewMarkdown?.trim())
+            }
             className="flex w-full items-center justify-center gap-2 rounded-xl bg-cyan-400 px-6 py-4 text-sm font-bold text-slate-950 transition-all hover:bg-cyan-300 disabled:cursor-not-allowed disabled:opacity-40"
           >
             {busy ? (
@@ -916,8 +1074,8 @@ function DocumentConverterContent({
               <div className="min-w-0">
                 <h2 className="font-semibold text-white">Document output</h2>
                 <p className="truncate text-xs text-slate-400">
-                  {file && outputFormat
-                    ? `${file.name.replace(/\.[^.]+$/, "")}${extensions[outputFormat]}`
+                  {outputFormat
+                    ? `${(file?.name ?? "custom-markdown.md").replace(/\.[^.]+$/, "")}${extensions[outputFormat]}`
                     : ""}
                 </p>
               </div>
@@ -997,9 +1155,7 @@ function DocumentConverterContent({
           <div className="flex shrink-0 items-center justify-between gap-3 border-t border-white/10 bg-[#111c2d] px-5 py-4 sm:px-8">
             <span className="truncate text-xs text-slate-400">
               {formatNames[outputFormat as Format]} ·{" "}
-              {file
-                ? `${file.name.replace(/\.[^.]+$/, "")}${extensions[outputFormat as Format]}`
-                : ""}
+              {`${(file?.name ?? "custom-markdown.md").replace(/\.[^.]+$/, "")}${extensions[outputFormat as Format]}`}
             </span>
             <button
               type="button"

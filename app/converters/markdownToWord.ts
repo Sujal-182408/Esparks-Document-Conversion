@@ -12,6 +12,7 @@ import {
   WidthType,
   BorderStyle,
   ImageRun,
+  ShadingType,
 } from "docx";
 import { marked, type Token, type Tokens } from "marked";
 
@@ -271,17 +272,26 @@ function convertTokens(
         break;
 
       case "code":
-        output.push(
-          new Paragraph({
-            children: [
-              new TextRun({
-                text: token.text.replace(/\n$/, ""),
-                font: "Courier New",
-              }),
-            ],
-            spacing: { before: 100, after: 200 },
-          })
-        );
+        {
+          const code = token.text.replace(/\n$/, "");
+          const lines: string[] = code.split("\n");
+          output.push(
+            new Paragraph({
+              children: lines.flatMap((line, index) => [
+                new TextRun({
+                  text: line || " ",
+                  font: "Courier New",
+                }),
+                ...(index < lines.length - 1
+                  ? [new TextRun({ break: 1 })]
+                  : []),
+              ]),
+              shading: { type: ShadingType.CLEAR, fill: "F2F4F7" },
+              indent: { left: 180, right: 180 },
+              spacing: { before: 100, after: 200, line: 240 },
+            })
+          );
+        }
         break;
 
       case "hr":

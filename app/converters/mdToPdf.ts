@@ -25,8 +25,8 @@ export async function convertMarkdownToPdf(
     throw new Error("The Markdown file is empty.");
   }
 
-  if (new Blob([markdown]).size > 20 * 1024 * 1024) {
-    throw new Error("The maximum file size is 20 MB.");
+  if (new Blob([markdown]).size > 28 * 1024 * 1024) {
+    throw new Error("The maximum Markdown file size is 28 MB.");
   }
 
   const html = await marked.parse(markdown);
@@ -207,7 +207,7 @@ export async function convertMarkdownToPdf(
   } catch (error) {
     if (
       error instanceof Error &&
-      (error.message.includes("PDF") || error.message.includes("20 MB"))
+      (error.message.includes("PDF") || error.message.includes("28 MB"))
     ) {
       throw error;
     }

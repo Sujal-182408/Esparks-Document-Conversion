@@ -20,6 +20,7 @@ const CONTENT_BOTTOM = 6.85; // last content y
 const CONTENT_H = CONTENT_BOTTOM - CONTENT_TOP; // 5.10
 const FOOTER_Y = 7.08;
 const GAP = 0.18; // gap between blocks — never 0
+const MAX_MARKDOWN_SIZE = 28 * 1024 * 1024;
 
 const C = {
   bg: "FFFFFF",
@@ -49,6 +50,7 @@ type Run = {
   fontSize?: number;
   fontFace?: string;
   link?: string;
+  bullet?: PptxGenJS.TextPropsOptions["bullet"];
 };
 type Line = Run[];
 
@@ -58,6 +60,26 @@ type MarkdownChart = {
   title?: string;
   categories: string[];
   series: { name: string; values: number[] }[];
+};
+
+type MarkdownShape = {
+  type: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  fill?: string;
+  line?: string;
+  label?: string;
+};
+
+type MarkdownTableMetadata = {
+  rows: {
+    text: string;
+    colspan?: number;
+    rowspan?: number;
+    merged?: boolean;
+  }[][];
 };
 
 /* ---------- Measurement: canvas is the only honest way ---------- */
@@ -91,7 +113,7 @@ function wrapRuns(
   type Tok = { text: string; run: Run; isSpace: boolean };
   const toks: Tok[] = [];
   for (const r of runs) {
-    const parts = r.text.split(/(\s+)/);
+    const parts = r.text.split(/(\n|[^\S\n]+)/);
     for (const p of parts)
       if (p) toks.push({ text: p, run: r, isSpace: /^\s+$/.test(p) });
   }
@@ -113,7 +135,8 @@ function wrapRuns(
       last.underline === run.underline &&
       last.fontSize === run.fontSize &&
       last.fontFace === run.fontFace &&
-      last.link === run.link
+      last.link === run.link &&
+      last.bullet === run.bullet
     )
       last.text += text;
     else cur.push({ ...run, text });
@@ -183,6 +206,7 @@ function toPptxTextRuns(runs: Run[]): PptxGenJS.TextProps[] {
       color: run.color,
       fontSize: run.fontSize,
       fontFace: run.fontFace,
+      bullet: run.bullet,
       ...(run.link ? { hyperlink: { url: run.link } } : {}),
     },
   }));
@@ -278,8 +302,8 @@ export async function convertMarkdownToPowerPoint(
   opts: MdToPptxOptions = {},
 ): Promise<Blob> {
   if (!markdown?.trim()) throw new Error("The Markdown file is empty.");
-  if (new Blob([markdown]).size > 20 * 1024 * 1024)
-    throw new Error("The maximum file size is 20 MB.");
+  if (new Blob([markdown]).size > MAX_MARKDOWN_SIZE)
+    throw new Error("The maximum Markdown file size is 28 MB.");
   // Keep slide and style metadata comments after removing optional YAML front matter.
   let clean = markdown
     .replace(/^\uFEFF/, "")
@@ -305,6 +329,7 @@ export async function convertMarkdownToPowerPoint(
   let slideTitle = opts.title ?? "Markdown Presentation";
   let hasContent = false;
   let pendingAlignment: "left" | "center" | "right" | "justify" | undefined;
+  let pendingTableMetadata: MarkdownTableMetadata | undefined;
   let y = CONTENT_TOP;
 
   /* ----- Slide builders: proper PPTX layouts ----- */
@@ -342,6 +367,7 @@ export async function convertMarkdownToPowerPoint(
       h: 0.14,
       fill: { color: C.accent },
       line: { color: C.accent, transparency: 100 },
+      objectName: "Document Conversion Decoration",
     });
     slide.addShape(pptx.ShapeType.rect, {
       x: (SW - 1.2) / 2,
@@ -350,6 +376,7 @@ export async function convertMarkdownToPowerPoint(
       h: 0.06,
       fill: { color: C.accent },
       line: { color: C.accent, transparency: 100 },
+      objectName: "Document Conversion Decoration",
     });
     slide.addText(
       titleRuns?.length ? toPptxTextRuns(titleRuns) : slideTitle,
@@ -401,6 +428,7 @@ export async function convertMarkdownToPowerPoint(
       h: 0.12,
       fill: { color: C.accent },
       line: { color: C.accent, transparency: 100 },
+      objectName: "Document Conversion Decoration",
     });
     // Title box is TALL (0.95") + fit shrink, so 2-line titles never hit divider
     slide.addText(
@@ -426,6 +454,7 @@ export async function convertMarkdownToPowerPoint(
       w: CONTENT_W,
       h: 0,
       line: { color: C.border, width: 1 },
+      objectName: "Document Conversion Divider",
     });
     footer();
     y = CONTENT_TOP;
@@ -456,6 +485,7 @@ export async function convertMarkdownToPowerPoint(
       italic?: boolean;
       color?: string;
       indent?: number;
+      listLevel?: number;
       quote?: boolean;
       align?: "left" | "center" | "right" | "justify";
     } = {},
@@ -513,6 +543,7 @@ export async function convertMarkdownToPowerPoint(
           rectRadius: 0.08,
           fill: { color: C.quoteBg },
           line: { color: C.quoteBg, transparency: 100 },
+          objectName: "Document Conversion Quote Background",
         });
         slide.addShape(pptx.ShapeType.rect, {
           x: MARGIN_X,
@@ -521,13 +552,18 @@ export async function convertMarkdownToPowerPoint(
           h: Math.max(0.2, h2 - 0.04),
           fill: { color: C.accent },
           line: { color: C.accent, transparency: 100 },
+          objectName: "Document Conversion Quote Accent",
         });
       }
       // Convert lines back to pptxgenjs runs with explicit line breaks.
       // NO fit:"shrink" — height is exact, so nothing overflows.
       const pptxRuns: PptxGenJS.TextProps[] = [];
       pageLines.forEach((line, li) => {
-        pptxRuns.push(...toPptxTextRuns(line));
+        const lineRuns =
+          idx + li === 0
+            ? line
+            : line.map((run) => ({ ...run, bullet: undefined }));
+        pptxRuns.push(...toPptxTextRuns(lineRuns));
         if (li < pageLines.length - 1)
           pptxRuns.push({ text: "", options: { breakLine: true } });
       });
@@ -545,6 +581,9 @@ export async function convertMarkdownToPowerPoint(
         align: o.align,
         lineSpacingMultiple: 1.15,
         paraSpaceAfter: 2,
+        ...(o.listLevel !== undefined
+          ? { objectName: `Document Conversion List Item level ${o.listLevel}` }
+          : {}),
       });
       y += h2 + GAP;
       hasContent = true;
@@ -621,6 +660,7 @@ export async function convertMarkdownToPowerPoint(
         rectRadius: 0.06,
         fill: { color: C.codeBg },
         line: { color: C.border, width: 0.5 },
+        objectName: "Document Conversion Code Block",
       });
       if (lang)
         slide.addText(lang.toUpperCase(), {
@@ -731,6 +771,75 @@ export async function convertMarkdownToPowerPoint(
     hasContent = true;
   }
 
+  function addShape(code: string) {
+    let shape: MarkdownShape;
+    try {
+      shape = JSON.parse(code) as MarkdownShape;
+    } catch {
+      throw new Error("The pptx-shape block must contain valid JSON.");
+    }
+
+    const shapeTypes: Record<string, PptxGenJS.ShapeType> = {
+      rect: pptx.ShapeType.rect,
+      roundRect: pptx.ShapeType.roundRect,
+      ellipse: pptx.ShapeType.ellipse,
+      diamond: pptx.ShapeType.diamond,
+      triangle: pptx.ShapeType.triangle,
+      hexagon: pptx.ShapeType.hexagon,
+      pentagon: pptx.ShapeType.pentagon,
+      parallelogram: pptx.ShapeType.parallelogram,
+      trapezoid: pptx.ShapeType.trapezoid,
+    };
+    if (
+      !shape ||
+      typeof shape !== "object" ||
+      !shapeTypes[shape.type] ||
+      ![shape.x, shape.y, shape.w, shape.h].every(Number.isFinite) ||
+      shape.w <= 0 ||
+      shape.h <= 0 ||
+      (shape.fill !== undefined && !/^[0-9a-f]{6}$/i.test(shape.fill)) ||
+      (shape.line !== undefined && !/^[0-9a-f]{6}$/i.test(shape.line)) ||
+      (shape.label !== undefined && typeof shape.label !== "string")
+    ) {
+      throw new Error("The pptx-shape block contains unsupported shape data.");
+    }
+
+    ensureSlide();
+    const x = Math.max(0, Math.min(SW - 0.05, shape.x));
+    const yPosition = Math.max(0, Math.min(7.5 - 0.05, shape.y));
+    const w = Math.max(0.05, Math.min(shape.w, SW - x));
+    const h = Math.max(0.05, Math.min(shape.h, 7.5 - yPosition));
+    slide.addShape(shapeTypes[shape.type], {
+      x,
+      y: yPosition,
+      w,
+      h,
+      fill: shape.fill
+        ? { color: shape.fill.toUpperCase() }
+        : { color: "FFFFFF", transparency: 100 },
+      line: shape.line
+        ? { color: shape.line.toUpperCase(), width: 1 }
+        : { color: "000000", transparency: 100 },
+      objectName: "Preserved PowerPoint Shape",
+    });
+    if (shape.label?.trim()) {
+      slide.addText(shape.label, {
+        x: x + 0.08,
+        y: yPosition + 0.04,
+        w: Math.max(0.05, w - 0.16),
+        h: Math.max(0.05, h - 0.08),
+        fontFace: FONT,
+        fontSize: Math.min(bodySize, 18),
+        color: C.primary,
+        align: "center",
+        valign: "middle",
+        margin: 0.02,
+        fit: "shrink",
+      });
+    }
+    hasContent = true;
+  }
+
   async function resolveImage(src: string): Promise<string> {
     if (/^data:image\/(png|jpe?g|gif);base64,/.test(src)) return src;
     if (/^data:image\/webp/i.test(src))
@@ -784,18 +893,31 @@ export async function convertMarkdownToPowerPoint(
     for (const [i, item] of tok.items.entries()) {
       const prefix = item.task
         ? item.checked
-          ? "☑ "
-          : "☐ "
-        : tok.ordered
-          ? `${Number(tok.start || 1) + i}. `
-          : "• ";
+          ? "[x] "
+          : "[ ] "
+        : "";
+      const bullet: NonNullable<Run["bullet"]> = tok.ordered
+        ? {
+            type: "number",
+            numberStartAt: Number(tok.start || 1) + i,
+          }
+        : { characterCode: "2022" };
       const children = (item.tokens ?? []) as Token[];
       const imgs = children.filter(isImage);
       const flushText = (toks: Token[]) => {
         const runs = inlineRuns(toks);
         if (!runs.length) return;
-        runs.unshift({ text: prefix, bold: true, color: C.accent });
-        drawTextBlock(runs, { indent: level * 0.32 });
+        if (prefix) {
+          runs.unshift({
+            text: prefix,
+            bold: true,
+            color: C.accent,
+            bullet,
+          });
+        } else {
+          runs[0] = { ...runs[0], bullet };
+        }
+        drawTextBlock(runs, { indent: level * 0.32, listLevel: level });
       };
       if (!imgs.length)
         flushText(children.filter((c) => !isList(c)));
@@ -816,7 +938,7 @@ export async function convertMarkdownToPowerPoint(
     }
   }
 
-  function addTable(tok: Tokens.Table) {
+  function addTable(tok: Tokens.Table, metadata?: MarkdownTableMetadata) {
     ensureSlide();
     // Column widths proportional to longest content — no squeezed / overflowed column
     const maxLens = tok.header.map((h, ci) =>
@@ -853,19 +975,25 @@ export async function convertMarkdownToPowerPoint(
       isHead: boolean,
       ri: number,
     ): PptxGenJS.TableRow =>
-      vals.map((v, ci) => ({
-        text: v,
-        options: {
-          bold: isHead,
-          color: C.primary,
-          fill: {
-            color: isHead ? C.tableHead : ri % 2 === 0 ? C.bg : C.tableAlt,
+      vals.flatMap((v, ci) => {
+      const cell = metadata?.rows[isHead ? 0 : ri + 1]?.[ci];
+        if (cell?.merged) return [];
+        return [{
+          text: cell?.text ?? v,
+          options: {
+            ...(cell?.colspan && cell.colspan > 1 ? { colspan: cell.colspan } : {}),
+            ...(cell?.rowspan && cell.rowspan > 1 ? { rowspan: cell.rowspan } : {}),
+            bold: isHead,
+            color: C.primary,
+            fill: {
+              color: isHead ? C.tableHead : ri % 2 === 0 ? C.bg : C.tableAlt,
+            },
+            align: tok.align?.[ci] ?? "left",
+            valign: "middle",
+            margin: 0.06,
           },
-          align: tok.align?.[ci] ?? "left",
-          valign: "middle",
-          margin: 0.06,
-        },
-      }));
+        }];
+      });
     let idx = 0;
     // Header-only table still draws once
     while (idx < rows.length || idx === 0) {
@@ -970,6 +1098,8 @@ export async function convertMarkdownToPowerPoint(
       case "code":
         if ((tok as Tokens.Code).lang?.trim().toLowerCase() === "pptx-chart") {
           addChart((tok as Tokens.Code).text);
+        } else if ((tok as Tokens.Code).lang?.trim().toLowerCase() === "pptx-shape") {
+          addShape((tok as Tokens.Code).text);
         } else {
           addCodeBlock(
             (tok as Tokens.Code).text,
@@ -978,7 +1108,10 @@ export async function convertMarkdownToPowerPoint(
         }
         break;
       case "table":
-        if (isTable(tok)) addTable(tok);
+        if (isTable(tok)) {
+          addTable(tok, pendingTableMetadata);
+          pendingTableMetadata = undefined;
+        }
         break;
       case "hr":
         ensureSlide();
@@ -989,6 +1122,7 @@ export async function convertMarkdownToPowerPoint(
           w: CONTENT_W,
           h: 0,
           line: { color: C.border, width: 1 },
+          objectName: "Document Conversion Horizontal Rule",
         });
         y += 0.32;
         hasContent = true;
@@ -1001,6 +1135,44 @@ export async function convertMarkdownToPowerPoint(
             .trim()
             .match(/^<!--\s*pptx-align:(left|center|right|justify)\s*-->$/);
           if (alignment) pendingAlignment = alignment[1] as typeof pendingAlignment;
+          const tableMetadata = tok.text.match(
+            /<!--\s*pptx-table:([A-Za-z0-9+/=]+)\s*-->/,
+          );
+          if (tableMetadata) {
+            try {
+              const binary = atob(tableMetadata[1]);
+              const bytes = Uint8Array.from(binary, (character) =>
+                character.charCodeAt(0),
+              );
+              const parsed = JSON.parse(
+                new TextDecoder().decode(bytes),
+              ) as MarkdownTableMetadata;
+              if (
+                !parsed ||
+                !Array.isArray(parsed.rows) ||
+                parsed.rows.some(
+                  (row) =>
+                    !Array.isArray(row) ||
+                    row.some(
+                      (cell) =>
+                        !cell ||
+                        typeof cell.text !== "string" ||
+                        (cell.colspan !== undefined &&
+                          (!Number.isInteger(cell.colspan) || cell.colspan < 1)) ||
+                        (cell.rowspan !== undefined &&
+                          (!Number.isInteger(cell.rowspan) || cell.rowspan < 1)) ||
+                        (cell.merged !== undefined &&
+                          typeof cell.merged !== "boolean"),
+                    ),
+                )
+              ) {
+                throw new Error("invalid table metadata");
+              }
+              pendingTableMetadata = parsed;
+            } catch {
+              throw new Error("The pptx-table metadata is invalid.");
+            }
+          }
         }
         break;
       default:
