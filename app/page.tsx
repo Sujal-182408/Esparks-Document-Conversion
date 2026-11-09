@@ -10,12 +10,12 @@ import Footer from "./components/Footer";
 
 const HowItWorks = dynamic(
   () => import("./components/HowItWorks"),
-  { loading: () => <div className="min-h-[400px]" /> }
+  { loading: () => <div className="min-h-100" /> }
 );
 
 const About = dynamic(
   () => import("./components/About"),
-  { loading: () => <div className="min-h-[300px]" /> }
+  { loading: () => <div className="min-h-75" /> }
 );
 
 const converters = {
@@ -108,7 +108,7 @@ export default function Home() {
   return (
     <Suspense
       fallback={
-        <div className="min-h-screen min-h-dvh bg-[var(--background)]" />
+        <div className="min-h-screen bg-(--background)" />
       }
     >
       <HomeContent />

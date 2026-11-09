@@ -3,1333 +3,2294 @@ import { marked, type Token, type Tokens } from "marked";
 import type PptxGenJS from "pptxgenjs";
 
 export type MdToPptxOptions = {
-  fontSize?: number; // body, 10-24, default 18
-  title?: string; // doc title fallback
+  fontSize?: number;
+  title?: string;
   author?: string;
 };
 
-/* ---------- Slide geometry — PowerPoint Windows default 16:9 ---------- */
-const SW = 13.333;
-const MARGIN_X = 0.75; // left/right
-const CONTENT_W = SW - MARGIN_X * 2; // 11.833
-const HEADER_TOP = 0.45; // title baseline area (Title & Content)
-const HEADER_H = 0.95;
-const DIVIDER_Y = 1.48;
-const CONTENT_TOP = 1.75; // first content y
-const CONTENT_BOTTOM = 6.85; // last content y
-const CONTENT_H = CONTENT_BOTTOM - CONTENT_TOP; // 5.10
-const FOOTER_Y = 7.08;
-const GAP = 0.18; // gap between blocks — never 0
-const MAX_MARKDOWN_SIZE = 28 * 1024 * 1024;
-
-const C = {
-  bg: "FFFFFF",
-  primary: "101828",
-  body: "475467",
-  muted: "667085",
-  accent: "0891B2",
-  accentDark: "0369A1",
-  border: "E4E7EC",
-  codeBg: "F2F4F7",
-  quoteBg: "F0F9FF",
-  tableHead: "E0F2FE",
-  tableAlt: "F8FAFC",
-  link: "0284C7",
-  codeText: "0369A1",
-};
-const FONT = "Calibri"; // PowerPoint Windows default font (not Arial)
-const FONT_MONO = "Consolas"; // Windows default mono
-
-type Run = {
+type TextRun = {
   text: string;
-  bold?: boolean;
-  italic?: boolean;
-  strike?: boolean;
-  color?: string;
-  underline?: boolean;
-  fontSize?: number;
-  fontFace?: string;
-  link?: string;
-  bullet?: PptxGenJS.TextPropsOptions["bullet"];
-};
-type Line = Run[];
-
-type MarkdownChart = {
-  type: "bar" | "line" | "pie" | "doughnut" | "area";
-  barDir?: "bar" | "col";
-  title?: string;
-  categories: string[];
-  series: { name: string; values: number[] }[];
+  options?: Record<string, any>;
 };
 
-type MarkdownShape = {
-  type: string;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-  fill?: string;
-  line?: string;
-  label?: string;
+type PptxSlide = PptxGenJS.Slide;
+
+type HtmlTableCell = {
+  runs: TextRun[];
+  text: string;
+  colspan: number;
+  rowspan: number;
+  header: boolean;
+  align: "left" | "center" | "right";
 };
 
-type MarkdownTableMetadata = {
-  rows: {
-    text: string;
-    colspan?: number;
-    rowspan?: number;
-    merged?: boolean;
-  }[][];
+const SW = 13.333;
+const MARGIN_X = 0.65;
+const CONTENT_W = SW - MARGIN_X * 2;
+const CONTENT_TOP = 1.35;
+const CONTENT_BOTTOM = 6.98;
+const FOOTER_Y = 7.17;
+const GAP = 0.12;
+
+const FONT = "Aptos";
+const MONO = "Consolas";
+
+const MAX_MARKDOWN_SIZE = 28 * 1024 * 1024;
+const MAX_IMAGE_SIZE = 8 * 1024 * 1024;
+const MAX_IMAGE_DIMENSION = 3000;
+
+const COLORS = {
+  primary: "087E8B",
+  accent: "16B8C4",
+  body: "263238",
+  muted: "718096",
+  border: "DCE5E9",
+  background: "FFFFFF",
+  codeBackground: "F1F5F9",
+  quoteBackground: "F0FAFB",
+  tableAlternate: "F5FAFB",
 };
 
-/* ---------- Measurement: canvas is the only honest way ---------- */
-let _canvas: HTMLCanvasElement | null = null;
-// SSR-SAFE: never touch `document` at import time, and never during render.
-// This function only runs inside the Convert click handler (client-only).
-// If called on server, fall back to char-width estimate instead of crashing.
-function measureWidth(
-  text: string,
-  fontSize: number,
-  bold: boolean,
-  fontFace: string,
-): number {
-  if (typeof document === "undefined") {
-    // Approximate 0.55 * fontSize pixels per character when canvas is unavailable.
-    return (text.length * fontSize * 0.55) / 72;
-  }
-  if (!_canvas) _canvas = document.createElement("canvas");
-  const ctx = _canvas.getContext("2d")!;
-  ctx.font = `${bold ? "700" : "400"} ${fontSize}px ${fontFace}, Arial, sans-serif`;
-  return ctx.measureText(text).width / 96;
+const FONT_SIZE = {
+  title: 38,
+  h1: 30,
+  h2: 25,
+  h3: 22,
+  h4: 20,
+  h5: 18,
+  h6: 16,
+  body: 18,
+  code: 10,
+  small: 9,
+};
+
+const LINE_HEIGHT = 1.25;
+
+function cleanText(value: unknown): string {
+  return String(value ?? "")
+    .replace(/\u0000/g, "")
+    .replace(/\u00a0/g, " ")
+    .replace(/\u200b/g, "")
+    .replace(/\uFEFF/g, "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/\t/g, "    ");
 }
-/** Wrap runs into lines that FIT width. Never splits a word unless word > width. */
-function wrapRuns(
-  runs: Run[],
-  widthIn: number,
-  fontSize: number,
-  fontFace: string,
-): Line[] {
-  // Expand runs into word tokens, preserving run style
-  type Tok = { text: string; run: Run; isSpace: boolean };
-  const toks: Tok[] = [];
-  for (const r of runs) {
-    const parts = r.text.split(/(\n|[^\S\n]+)/);
-    for (const p of parts)
-      if (p) toks.push({ text: p, run: r, isSpace: /^\s+$/.test(p) });
-  }
-  const lines: Line[] = [];
-  let cur: Run[] = [];
-  let curW = 0;
-  const pushLine = () => {
-    if (cur.length) lines.push(cur);
-    cur = [];
-    curW = 0;
-  };
-  const pushRun = (text: string, run: Run) => {
-    const last = cur[cur.length - 1];
+
+function mergeRuns(runs: TextRun[]): TextRun[] {
+  const result: TextRun[] = [];
+
+  for (const run of runs) {
+    if (!run.text) continue;
+
+    const previous = result[result.length - 1];
+
     if (
-      last &&
-      last.bold === run.bold &&
-      last.italic === run.italic &&
-      last.color === run.color &&
-      last.underline === run.underline &&
-      last.fontSize === run.fontSize &&
-      last.fontFace === run.fontFace &&
-      last.link === run.link &&
-      last.bullet === run.bullet
-    )
-      last.text += text;
-    else cur.push({ ...run, text });
-  };
-  for (const t of toks) {
-    if (t.text === "\n") {
-      pushLine();
-      continue;
+      previous &&
+      JSON.stringify(previous.options ?? {}) ===
+        JSON.stringify(run.options ?? {})
+    ) {
+      previous.text += run.text;
+    } else {
+      result.push({
+        text: run.text,
+        options: { ...run.options },
+      });
     }
-    const ff = t.run.fontFace ?? fontFace;
-    const runFontSize = t.run.fontSize ?? fontSize;
-    let remaining = t.text;
-    // Hard-split overlong words char-by-char
-    while (remaining) {
-      const w = measureWidth(remaining, runFontSize, !!t.run.bold, ff);
-      if (curW + w <= widthIn) {
-        pushRun(remaining, t.run);
-        curW += w;
-        remaining = "";
-      } else if (curW > 0 && !t.isSpace) {
-        pushLine();
-      } else {
-        // take as many chars as fit
-        let lo = 0,
-          hi = remaining.length;
-        // binary search max fitting prefix
-        while (lo < hi) {
-          const mid = Math.ceil((lo + hi) / 2);
-          if (
-            measureWidth(remaining.slice(0, mid), runFontSize, !!t.run.bold, ff) <=
-            widthIn - curW
-          )
-            lo = mid;
-          else hi = mid - 1;
-        }
-        const take = Math.max(1, lo);
-        pushRun(remaining.slice(0, take), t.run);
-        curW += measureWidth(
-          remaining.slice(0, take),
-          runFontSize,
-          !!t.run.bold,
-          ff,
-        );
-        remaining = remaining.slice(take);
-        if (remaining) pushLine();
-      }
-    }
-    // trailing space of a line is dropped visually — keep width calc honest
-    if (t.isSpace && curW >= widthIn) pushLine();
   }
-  pushLine();
-  return lines.length ? lines : [[]];
+
+  return result;
 }
 
-function plainText(runs: Run[]) {
-  return runs.map((r) => r.text).join("");
+function safeUrl(value: string): string | undefined {
+  try {
+    const url = new URL(
+      value,
+      typeof window !== "undefined"
+        ? window.location.href
+        : "https://localhost",
+    );
+
+    if (["http:", "https:", "mailto:"].includes(url.protocol)) {
+      return url.href;
+    }
+  } catch {
+    return undefined;
+  }
+
+  return undefined;
 }
 
-function toPptxTextRuns(runs: Run[]): PptxGenJS.TextProps[] {
-  return runs.map((run) => ({
-    text: run.text,
-    options: {
-      bold: run.bold,
-      italic: run.italic,
-      strike: run.strike,
-      underline: run.underline ? { style: "sng" } : undefined,
-      color: run.color,
-      fontSize: run.fontSize,
-      fontFace: run.fontFace,
-      bullet: run.bullet,
-      ...(run.link ? { hyperlink: { url: run.link } } : {}),
-    },
-  }));
+function getPlainText(tokens: Token[] = []): string {
+  return tokens
+    .map((token) => {
+      if (token.type === "text") {
+        const item = token as Tokens.Text;
+
+        if (item.tokens?.length) {
+          return getPlainText(item.tokens as Token[]);
+        }
+
+        return item.text;
+      }
+
+      if (token.type === "codespan") {
+        return (token as Tokens.Codespan).text;
+      }
+
+      if (token.type === "image") {
+        return (token as Tokens.Image).text;
+      }
+
+      if (token.type === "html") {
+        return (token as Tokens.HTML).text.replace(/<[^>]*>/g, "");
+      }
+
+      if ("tokens" in token && Array.isArray(token.tokens)) {
+        return getPlainText(token.tokens as Token[]);
+      }
+
+      if ("text" in token && typeof token.text === "string") {
+        return token.text;
+      }
+
+      return "";
+    })
+    .join("");
 }
 
-/* ---------- Markdown -> Runs ---------- */
-function inlineRuns(tokens: Token[], inherited: Partial<Run> = {}): Run[] {
-  const out: Run[] = [];
-  let active = inherited;
-  const styleStack: Partial<Run>[] = [];
-  const add = (text: string, o: Partial<Run> = {}) => {
-    if (text) out.push({ text, ...active, ...o });
+function inlineRuns(
+  tokens: Token[] = [],
+  inherited: Record<string, any> = {},
+): TextRun[] {
+  const output: TextRun[] = [];
+
+  const add = (
+    text: string,
+    options: Record<string, any> = inherited,
+  ) => {
+    if (text) {
+      output.push({
+        text,
+        options: { ...options },
+      });
+    }
   };
-  for (const t of tokens) {
-    switch (t.type) {
-      case "text":
+
+  for (const token of tokens) {
+    switch (token.type) {
       case "escape":
-        if ("tokens" in t && Array.isArray(t.tokens))
-          out.push(...inlineRuns(t.tokens, active));
-        else if ("text" in t) add(t.text);
+        add((token as Tokens.Escape).text);
         break;
+
+      case "text": {
+        const item = token as Tokens.Text;
+
+        if (item.tokens?.length) {
+          output.push(
+            ...inlineRuns(item.tokens as Token[], inherited),
+          );
+        } else {
+          add(item.text);
+        }
+
+        break;
+      }
+
       case "strong":
-        out.push(...inlineRuns(t.tokens ?? [], { ...active, bold: true }));
-        break;
-      case "em":
-        out.push(...inlineRuns(t.tokens ?? [], { ...active, italic: true }));
-        break;
-      case "del":
-        out.push(...inlineRuns(t.tokens ?? [], { ...active, strike: true }));
-        break;
-      case "codespan":
-        add(t.text, { fontFace: FONT_MONO, color: C.codeText });
-        break;
-      case "link": {
-        const href = t.href ?? "";
-        const safe = /^(https?:|mailto:|#|\/)/i.test(href) ? href : undefined;
-        out.push(
-          ...inlineRuns(t.tokens ?? [], {
-            ...active,
-            color: C.link,
-            link: safe,
+        output.push(
+          ...inlineRuns(token.tokens as Token[], {
+            ...inherited,
+            bold: true,
           }),
         );
         break;
-      }
-      case "image":
-        add(`[Image: ${t.text || t.href}]`, {
-          italic: true,
-          color: C.muted,
+
+      case "em":
+        output.push(
+          ...inlineRuns(token.tokens as Token[], {
+            ...inherited,
+            italic: true,
+          }),
+        );
+        break;
+
+      case "del":
+        output.push(
+          ...inlineRuns(token.tokens as Token[], {
+            ...inherited,
+            strike: true,
+          }),
+        );
+        break;
+
+      case "codespan":
+        add((token as Tokens.Codespan).text, {
+          ...inherited,
+          fontFace: MONO,
+          color: "B42318",
+          fill: { color: "F1F5F9" },
         });
         break;
-      case "br":
-        out.push({ text: "\n", ...active });
-        break;
-      case "html": {
-        const raw = t.raw.trim();
-        const color = raw.match(
-          /^<span\b[^>]*\bdata-pptx-color="#?([0-9a-f]{6})"[^>]*>$/i,
-        )?.[1];
-        const size = raw.match(
-          /^<span\b[^>]*\bdata-pptx-font-size="(\d+(?:\.\d+)?)"[^>]*>$/i,
-        )?.[1];
-        if (raw === "<u>") {
-          styleStack.push(active);
-          active = { ...active, underline: true };
-        } else if (raw === "</u>" || raw === "</span>") {
-          active = styleStack.pop() ?? inherited;
-        } else if (color || size) {
-          styleStack.push(active);
-          active = {
-            ...active,
-            ...(color ? { color: color.toUpperCase() } : {}),
-            ...(size ? { fontSize: Number(size) } : {}),
-          };
-        }
+
+      case "link": {
+        const link = token as Tokens.Link;
+        const href = safeUrl(link.href);
+
+        output.push(
+          ...inlineRuns(link.tokens as Token[], {
+            ...inherited,
+            color: COLORS.primary,
+            underline: { color: COLORS.primary },
+            ...(href ? { hyperlink: { url: href } } : {}),
+          }),
+        );
+
         break;
       }
-      default:
-        if ("tokens" in t && Array.isArray(t.tokens))
-          out.push(...inlineRuns(t.tokens, active));
-        else if ("text" in t && typeof t.text === "string") add(t.text);
+
+      case "image": {
+        const image = token as Tokens.Image;
+        add(image.text || "[Image]");
+        break;
+      }
+
+      case "br":
+        add("\n");
+        break;
+
+      case "html": {
+        const value = (token as Tokens.HTML).text;
+
+        add(
+          value
+            .replace(/<br\s*\/?>/gi, "\n")
+            .replace(/<[^>]*>/g, ""),
+        );
+
+        break;
+      }
+
+      default: {
+        if ("tokens" in token && Array.isArray(token.tokens)) {
+          output.push(
+            ...inlineRuns(token.tokens as Token[], inherited),
+          );
+        } else if ("text" in token && typeof token.text === "string") {
+          add(token.text);
+        }
+      }
     }
   }
-  return out;
-}
-const isList = (t: Token): t is Tokens.List => t.type === "list";
-const isImage = (t: Token): t is Tokens.Image => t.type === "image";
-const isTable = (t: Token): t is Tokens.Table => t.type === "table";
 
-/* ---------- Main ---------- */
+  return mergeRuns(output);
+}
+
+function measureText(
+  text: string,
+  fontSize: number,
+  bold = false,
+  fontFace = FONT,
+): number {
+  if (typeof document === "undefined") {
+    return (text.length * fontSize * 0.55) / 72;
+  }
+
+  const canvas = document.createElement("canvas");
+  const context = canvas.getContext("2d");
+
+  if (!context) {
+    return (text.length * fontSize * 0.55) / 72;
+  }
+
+  context.font = `${bold ? "700" : "400"} ${fontSize}px "${fontFace}"`;
+
+  return context.measureText(text).width / 96;
+}
+
+function wrapPlainText(
+  text: string,
+  maxWidth: number,
+  fontSize: number,
+  fontFace = FONT,
+): string[] {
+  const output: string[] = [];
+
+  for (const paragraph of cleanText(text).split("\n")) {
+    if (!paragraph) {
+      output.push("");
+      continue;
+    }
+
+    let current = "";
+
+    for (const word of paragraph.split(/(\s+)/)) {
+      if (
+        !current ||
+        measureText(current + word, fontSize, false, fontFace) <= maxWidth
+      ) {
+        current += word;
+        continue;
+      }
+
+      output.push(current.trimEnd());
+      current = word.trimStart();
+
+      while (
+        current &&
+        measureText(current, fontSize, false, fontFace) > maxWidth
+      ) {
+        let cut = 0;
+
+        for (let i = 1; i <= current.length; i++) {
+          if (
+            measureText(current.slice(0, i), fontSize, false, fontFace) >
+            maxWidth
+          ) {
+            break;
+          }
+
+          cut = i;
+        }
+
+        if (!cut) cut = 1;
+
+        output.push(current.slice(0, cut));
+        current = current.slice(cut);
+      }
+    }
+
+    if (current.trim()) output.push(current.trimEnd());
+  }
+
+  return output.length ? output : [""];
+}
+
+function wrapRuns(
+  runs: TextRun[],
+  maxWidth: number,
+  defaultSize: number,
+): TextRun[][] {
+  const lines: TextRun[][] = [[]];
+  let currentWidth = 0;
+
+  const push = (text: string, options: Record<string, any>) => {
+    if (!text) return;
+
+    const currentLine = lines[lines.length - 1];
+    const previous = currentLine[currentLine.length - 1];
+
+    if (
+      previous &&
+      JSON.stringify(previous.options ?? {}) === JSON.stringify(options)
+    ) {
+      previous.text += text;
+    } else {
+      currentLine.push({
+        text,
+        options: { ...options },
+      });
+    }
+  };
+
+  for (const run of runs) {
+    const style = run.options ?? {};
+    const fontSize = Number(style.fontSize ?? defaultSize);
+    const fontFace = String(style.fontFace ?? FONT);
+    const bold = Boolean(style.bold);
+    const parts = cleanText(run.text).split(/(\n|\s+)/);
+
+    for (const part of parts) {
+      if (!part) continue;
+
+      if (part === "\n") {
+        lines.push([]);
+        currentWidth = 0;
+        continue;
+      }
+
+      let remaining = part;
+
+      while (remaining) {
+        const isWhitespace = /^\s+$/.test(remaining);
+
+        if (
+          currentWidth > 0 &&
+          currentWidth +
+            measureText(remaining, fontSize, bold, fontFace) >
+            maxWidth &&
+          !isWhitespace
+        ) {
+          lines.push([]);
+          currentWidth = 0;
+          remaining = remaining.trimStart();
+
+          if (!remaining) break;
+        }
+
+        const available = maxWidth - currentWidth;
+
+        if (
+          measureText(remaining, fontSize, bold, fontFace) <= available
+        ) {
+          push(remaining, style);
+          currentWidth += measureText(
+            remaining,
+            fontSize,
+            bold,
+            fontFace,
+          );
+          break;
+        }
+
+        let cut = 0;
+
+        for (let i = 1; i <= remaining.length; i++) {
+          if (
+            measureText(
+              remaining.slice(0, i),
+              fontSize,
+              bold,
+              fontFace,
+            ) > available
+          ) {
+            break;
+          }
+
+          cut = i;
+        }
+
+        if (!cut) {
+          if (currentWidth > 0) {
+            lines.push([]);
+            currentWidth = 0;
+            continue;
+          }
+
+          cut = 1;
+        }
+
+        const piece = remaining.slice(0, cut);
+
+        push(piece, style);
+
+        currentWidth += measureText(
+          piece,
+          fontSize,
+          bold,
+          fontFace,
+        );
+
+        remaining = remaining.slice(cut);
+
+        if (remaining) {
+          lines.push([]);
+          currentWidth = 0;
+        }
+      }
+    }
+  }
+
+  return lines.length ? lines : [[]];
+}
+
+function decodeSvgDataUrl(src: string): string {
+  const comma = src.indexOf(",");
+
+  if (comma < 0) {
+    throw new Error("Invalid SVG data URL.");
+  }
+
+  const metadata = src.slice(0, comma);
+  const payload = src.slice(comma + 1);
+
+  try {
+    if (/;base64/i.test(metadata)) {
+      const binary = atob(payload);
+      const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+
+      return new TextDecoder().decode(bytes);
+    }
+
+    return decodeURIComponent(payload);
+  } catch {
+    throw new Error("Unable to decode SVG data.");
+  }
+}
+
+async function svgToPng(svg: string): Promise<string> {
+  const parser = new DOMParser();
+  const parsed = parser.parseFromString(svg, "image/svg+xml");
+
+  if (parsed.querySelector("parsererror")) {
+    throw new Error("Invalid SVG markup.");
+  }
+
+  const svgElement = parsed.documentElement;
+
+  if (svgElement.tagName.toLowerCase() !== "svg") {
+    throw new Error("SVG root element is missing.");
+  }
+
+  parsed.querySelectorAll("script, foreignObject").forEach((element) => {
+    element.remove();
+  });
+
+  parsed.querySelectorAll("*").forEach((element) => {
+    for (const attribute of Array.from(element.attributes)) {
+      if (/^on/i.test(attribute.name)) {
+        element.removeAttribute(attribute.name);
+      }
+
+      if (
+        ["href", "xlink:href"].includes(attribute.name.toLowerCase()) &&
+        /^\s*javascript:/i.test(attribute.value)
+      ) {
+        element.removeAttribute(attribute.name);
+      }
+    }
+  });
+
+  if (!svgElement.getAttribute("xmlns")) {
+    svgElement.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+  }
+
+  let width = Number.parseFloat(svgElement.getAttribute("width") ?? "");
+  let height = Number.parseFloat(svgElement.getAttribute("height") ?? "");
+
+  const viewBox = svgElement.getAttribute("viewBox");
+
+  if ((!width || !height) && viewBox) {
+    const values = viewBox.split(/[\s,]+/).map(Number);
+
+    if (values.length === 4) {
+      width ||= values[2];
+      height ||= values[3];
+    }
+  }
+
+  width = Math.max(1, Math.min(width || 1200, MAX_IMAGE_DIMENSION));
+  height = Math.max(1, Math.min(height || 800, MAX_IMAGE_DIMENSION));
+
+  svgElement.setAttribute("width", String(width));
+  svgElement.setAttribute("height", String(height));
+
+  const svgString = new XMLSerializer().serializeToString(parsed);
+  const blob = new Blob([svgString], {
+    type: "image/svg+xml;charset=utf-8",
+  });
+
+  const objectUrl = URL.createObjectURL(blob);
+
+  try {
+    const image = new Image();
+
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error("Unable to render SVG."));
+      image.src = objectUrl;
+    });
+
+    const canvas = document.createElement("canvas");
+
+    const scale = Math.min(
+      2,
+      MAX_IMAGE_DIMENSION / Math.max(image.naturalWidth, image.naturalHeight),
+    );
+
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+
+    const context = canvas.getContext("2d");
+
+    if (!context) {
+      throw new Error("Canvas is unavailable.");
+    }
+
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+    return canvas.toDataURL("image/png");
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+async function resolveImage(src: string): Promise<string> {
+  if (/^data:image\/svg\+xml/i.test(src)) {
+    return svgToPng(decodeSvgDataUrl(src));
+  }
+
+  if (/^data:image\/(png|jpe?g|gif|webp);base64,/i.test(src)) {
+    if ((src.length * 3) / 4 > MAX_IMAGE_SIZE) {
+      throw new Error("Image exceeds the 8 MB limit.");
+    }
+
+    if (/^data:image\/webp/i.test(src)) {
+      const blob = await fetch(src).then((response) => response.blob());
+      return convertBlobToPng(blob);
+    }
+
+    return src;
+  }
+
+  if (src.startsWith("data:image/")) {
+    throw new Error("Unsupported embedded image format.");
+  }
+
+  let url: URL;
+
+  try {
+    url = new URL(
+      src,
+      typeof window !== "undefined"
+        ? window.location.href
+        : "https://localhost",
+    );
+  } catch {
+    throw new Error(`Invalid image URL: ${src}`);
+  }
+
+  if (!["http:", "https:"].includes(url.protocol)) {
+    throw new Error("Unsupported image URL.");
+  }
+
+  const response = await fetch(url.href, {
+    mode: "cors",
+    credentials: "omit",
+  });
+
+  if (!response.ok) {
+    throw new Error(`Image request failed: ${response.status}`);
+  }
+
+  const blob = await response.blob();
+
+  if (blob.size > MAX_IMAGE_SIZE) {
+    throw new Error("Image exceeds the 8 MB limit.");
+  }
+
+  if (!blob.type.startsWith("image/")) {
+    throw new Error("The URL does not contain an image.");
+  }
+
+  if (blob.type === "image/svg+xml") {
+    return svgToPng(await blob.text());
+  }
+
+  if (
+    !["image/png", "image/jpeg", "image/gif"].includes(blob.type)
+  ) {
+    return convertBlobToPng(blob);
+  }
+
+  return blobToDataUrl(blob);
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+
+    reader.onload = () => {
+      if (typeof reader.result === "string") {
+        resolve(reader.result);
+      } else {
+        reject(new Error("Unable to read image."));
+      }
+    };
+
+    reader.onerror = () => reject(new Error("Unable to read image."));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function convertBlobToPng(blob: Blob): Promise<string> {
+  const objectUrl = URL.createObjectURL(blob);
+
+  try {
+    const image = new Image();
+
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
+      image.onerror = () => reject(new Error("Unsupported image format."));
+      image.src = objectUrl;
+    });
+
+    const canvas = document.createElement("canvas");
+
+    const scale = Math.min(
+      1,
+      MAX_IMAGE_DIMENSION /
+        Math.max(image.naturalWidth, image.naturalHeight),
+    );
+
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+
+    const context = canvas.getContext("2d");
+
+    if (!context) throw new Error("Canvas is unavailable.");
+
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+    return canvas.toDataURL("image/png");
+  } finally {
+    URL.revokeObjectURL(objectUrl);
+  }
+}
+
+function parseJson(code: string): Record<string, any> | null {
+  try {
+    const result = JSON.parse(code);
+
+    return result && typeof result === "object" && !Array.isArray(result)
+      ? result
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function convertMarkdownToPowerPoint(
   markdown: string,
   opts: MdToPptxOptions = {},
 ): Promise<Blob> {
-  if (!markdown?.trim()) throw new Error("The Markdown file is empty.");
-  if (new Blob([markdown]).size > MAX_MARKDOWN_SIZE)
-    throw new Error("The maximum Markdown file size is 28 MB.");
-  // Keep slide and style metadata comments after removing optional YAML front matter.
-  let clean = markdown
-    .replace(/^\uFEFF/, "")
-    .replace(/\r\n?/g, "\n")
-    .trim();
-  clean = clean.replace(/^---\n[\s\S]*?\n---\n/, "");
-  if (!clean)
-    throw new Error("The Markdown file contains no readable content.");
+  if (!markdown?.trim()) {
+    throw new Error("The Markdown file is empty.");
+  }
 
-  const bodySize = Math.min(24, Math.max(10, opts.fontSize ?? 18));
-  const lineH = (fs: number) => (fs / 72) * 1.32; // Calibri line height incl. spacing
-  const blockH = (lines: number, fs: number) => lines * lineH(fs) + 0.14; // + padding
+  if (new Blob([markdown]).size > MAX_MARKDOWN_SIZE) {
+    throw new Error("The maximum Markdown file size is 28 MB.");
+  }
+
+  const source = cleanText(markdown)
+    .replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/, "")
+    .trim();
+
+  if (!source) {
+    throw new Error("The Markdown file contains no readable content.");
+  }
 
   const { default: PptxGenJS } = await import("pptxgenjs");
   const pptx = new PptxGenJS();
+
   pptx.layout = "LAYOUT_WIDE";
-  pptx.author = opts.author ?? "Document Conversion";
+  pptx.author = opts.author ?? "eSparks Document Conversion";
   pptx.title = opts.title ?? "Markdown Presentation";
-  pptx.theme = { headFontFace: FONT, bodyFontFace: FONT };
+  pptx.subject = "Markdown to PowerPoint conversion";
+  pptx.company = "eSparks IT Solutions";
 
-  let slide!: PptxGenJS.Slide;
-  let slideNo = 0;
-  let slideTitle = opts.title ?? "Markdown Presentation";
-  let hasContent = false;
-  let pendingAlignment: "left" | "center" | "right" | "justify" | undefined;
-  let pendingTableMetadata: MarkdownTableMetadata | undefined;
+  // PptxGenJS does not support pptx.lang or theme.lang.
+  pptx.theme = {
+    headFontFace: FONT,
+    bodyFontFace: FONT,
+  };
+
+  const bodySize = Math.min(
+    24,
+    Math.max(10, opts.fontSize ?? FONT_SIZE.body),
+  );
+
+  const tokens = marked.lexer(source, {
+    gfm: true,
+    breaks: true,
+  }) as Token[];
+
+  let slide!: PptxSlide;
+  let slideNumber = 0;
   let y = CONTENT_TOP;
+  let hasContent = false;
+  let currentTitle = opts.title ?? "Markdown Presentation";
 
-  /* ----- Slide builders: proper PPTX layouts ----- */
-  function footer() {
-    slide.addText(String(slideNo), {
-      x: SW - 1.1,
+  const warnings: string[] = [];
+
+  function addFooter() {
+    slide.addText("eSparks Document Conversion", {
+      x: MARGIN_X,
       y: FOOTER_Y,
-      w: 0.42,
-      h: 0.2,
+      w: 3.5,
+      h: 0.18,
       fontFace: FONT,
-      fontSize: 9,
-      color: C.muted,
+      fontSize: 8,
+      color: COLORS.muted,
+      margin: 0,
+    });
+
+    slide.addText(String(slideNumber), {
+      x: SW - 1.05,
+      y: FOOTER_Y,
+      w: 0.4,
+      h: 0.18,
+      fontFace: FONT,
+      fontSize: 8,
+      color: COLORS.muted,
       align: "right",
       margin: 0,
-      objectName: "Document Conversion Slide Number",
     });
-  }
-  /** Layout 1: Title Slide — ONLY for first H1 / doc title */
-  function addTitleSlide(
-    title: string,
-    subtitle = "Converted from Markdown",
-    titleRuns?: Run[],
-    subtitleRuns?: Run[],
-  ) {
-    slideNo++;
-    slideTitle = title || "Untitled";
-    hasContent = false;
-    slide = pptx.addSlide();
-    slide.background = { color: C.bg };
-    // centred accent bar + big centred title (never overflows: fit shrink ONLY here, box is huge)
-    slide.addShape(pptx.ShapeType.rect, {
-      x: 0,
-      y: 0,
-      w: SW,
-      h: 0.14,
-      fill: { color: C.accent },
-      line: { color: C.accent, transparency: 100 },
-      objectName: "Document Conversion Decoration",
-    });
-    slide.addShape(pptx.ShapeType.rect, {
-      x: (SW - 1.2) / 2,
-      y: 2.35,
-      w: 1.2,
-      h: 0.06,
-      fill: { color: C.accent },
-      line: { color: C.accent, transparency: 100 },
-      objectName: "Document Conversion Decoration",
-    });
-    slide.addText(
-      titleRuns?.length ? toPptxTextRuns(titleRuns) : slideTitle,
-      {
-        x: 1.2,
-        y: 2.6,
-        w: SW - 2.4,
-        h: 1.6,
-        fontFace: FONT,
-        fontSize: 40,
-        bold: true,
-        color: C.primary,
-        align: "center",
-        valign: "middle",
-        margin: 0,
-        breakLine: true,
-        fit: "shrink",
-      },
-    );
-    slide.addText(
-      subtitleRuns?.length ? toPptxTextRuns(subtitleRuns) : subtitle,
-      {
-        x: 1.2,
-        y: 4.3,
-        w: SW - 2.4,
-        h: 0.4,
-        fontFace: FONT,
-        fontSize: 16,
-        color: C.muted,
-        align: "center",
-        margin: 0,
-      },
-    );
-    footer();
-    y = CONTENT_TOP;
-  }
-  /** Layout 2: Title & Content — every other slide. This is Windows default. */
-  function addContentSlide(title: string, titleRuns?: Run[]) {
-    slideNo++;
-    slideTitle =
-      title.replace(/(?: \(continued\))+$/g, "").trim() || "Untitled section";
-    hasContent = false;
-    slide = pptx.addSlide();
-    slide.background = { color: C.bg };
-    slide.addShape(pptx.ShapeType.rect, {
-      x: 0,
-      y: 0,
-      w: SW,
-      h: 0.12,
-      fill: { color: C.accent },
-      line: { color: C.accent, transparency: 100 },
-      objectName: "Document Conversion Decoration",
-    });
-    // Title box is TALL (0.95") + fit shrink, so 2-line titles never hit divider
-    slide.addText(
-      titleRuns?.length ? toPptxTextRuns(titleRuns) : slideTitle,
-      {
-        x: MARGIN_X,
-        y: HEADER_TOP,
-        w: CONTENT_W,
-        h: HEADER_H,
-        fontFace: FONT,
-        fontSize: 28,
-        bold: true,
-        color: C.primary,
-        margin: 0,
-        valign: "middle",
-        breakLine: true,
-        fit: "shrink",
-      },
-    );
-    slide.addShape(pptx.ShapeType.line, {
-      x: MARGIN_X,
-      y: DIVIDER_Y,
-      w: CONTENT_W,
-      h: 0,
-      line: { color: C.border, width: 1 },
-      objectName: "Document Conversion Divider",
-    });
-    footer();
-    y = CONTENT_TOP;
-  }
-  function ensureSlide() {
-    if (slideNo === 0) addContentSlide(slideTitle);
-  }
-  function continueSlide() {
-    addContentSlide(`${slideTitle} (continued)`);
-  }
-  /** Reserve height. If it doesn't fit, move to fresh slide. Never throws. */
-  function ensureSpace(h: number) {
-    ensureSlide();
-    if (y + h <= CONTENT_BOTTOM) return;
-    if (hasContent) continueSlide();
-    // On fresh slide: if STILL too tall, caller must have split it. We never throw.
-  }
-  function remainingH() {
-    return CONTENT_BOTTOM - y;
   }
 
-  /* ----- Core: draw wrapped lines, paginated, no overlap ----- */
-  function drawTextBlock(
-    runs: Run[],
-    o: {
+  function addContentSlide(title: string) {
+    slideNumber++;
+    currentTitle = title || currentTitle;
+
+    slide = pptx.addSlide();
+    slide.background = { color: COLORS.background };
+
+    slide.addText(currentTitle, {
+      x: MARGIN_X,
+      y: 0.35,
+      w: CONTENT_W,
+      h: 0.72,
+      fontFace: FONT,
+      fontSize: FONT_SIZE.h2,
+      bold: true,
+      color: COLORS.primary,
+      margin: 0,
+      valign: "middle",
+      fit: "shrink",
+    });
+
+    slide.addShape(pptx.ShapeType.line, {
+      x: MARGIN_X,
+      y: 1.16,
+      w: CONTENT_W,
+      h: 0,
+      line: { color: COLORS.border, width: 1 },
+    });
+
+    addFooter();
+
+    y = CONTENT_TOP;
+    hasContent = false;
+  }
+
+  function addTitleSlide(title: string) {
+    slideNumber++;
+    currentTitle = title || "Markdown Presentation";
+
+    slide = pptx.addSlide();
+    slide.background = { color: COLORS.background };
+
+    slide.addShape(pptx.ShapeType.rect, {
+      x: 0,
+      y: 0,
+      w: SW,
+      h: 0.16,
+      line: { color: COLORS.primary, transparency: 100 },
+      fill: { color: COLORS.primary },
+    });
+
+    slide.addText(currentTitle, {
+      x: 1.1,
+      y: 2.1,
+      w: 11.1,
+      h: 1.6,
+      fontFace: FONT,
+      fontSize: FONT_SIZE.title,
+      bold: true,
+      color: COLORS.primary,
+      align: "center",
+      valign: "middle",
+      margin: 0.1,
+      fit: "shrink",
+    });
+
+    slide.addText("Converted from Markdown", {
+      x: 2,
+      y: 4.05,
+      w: 9.3,
+      h: 0.45,
+      fontFace: FONT,
+      fontSize: 17,
+      color: COLORS.muted,
+      align: "center",
+      margin: 0,
+    });
+
+    addFooter();
+
+    y = CONTENT_TOP;
+    hasContent = true;
+  }
+
+  function ensureSlide() {
+    if (!slide) {
+      addContentSlide(currentTitle);
+    }
+  }
+
+  function nextSlide() {
+    addContentSlide(`${currentTitle} (continued)`);
+  }
+
+  function ensureSpace(height: number) {
+    ensureSlide();
+
+    if (y + height <= CONTENT_BOTTOM) return;
+
+    if (hasContent) {
+      nextSlide();
+    }
+  }
+
+  function drawRuns(
+    inputRuns: TextRun[],
+    options: {
       fontSize?: number;
+      color?: string;
       bold?: boolean;
       italic?: boolean;
-      color?: string;
-      indent?: number;
-      listLevel?: number;
-      quote?: boolean;
       align?: "left" | "center" | "right" | "justify";
+      indent?: number;
+      quote?: boolean;
     } = {},
   ) {
-    const text = plainText(runs);
-    if (!text.trim()) return;
-    ensureSlide();
-    const fs = Math.max(
-      o.fontSize ?? bodySize,
-      ...runs.map((run) => run.fontSize ?? 0),
-    );
-    const indent = o.indent ?? 0;
-    const quotePad = o.quote ? 0.22 : 0;
-    const x = MARGIN_X + indent + quotePad;
-    const w = CONTENT_W - indent - quotePad;
-    const allLines = wrapRuns(
-      runs.map((r) => ({
-        ...r,
-        bold: r.bold || o.bold,
-        italic: r.italic || o.italic,
-        color: r.color ?? o.color ?? C.body,
-      })),
-      w,
-      fs,
-      FONT,
-    );
-    let idx = 0;
-    while (idx < allLines.length) {
-      // How many lines fit in remaining space? At least 1.
-      const maxLines = Math.max(
+    const fontSize = options.fontSize ?? bodySize;
+    const indent = options.indent ?? 0;
+    const x = MARGIN_X + indent + (options.quote ? 0.2 : 0);
+    const width = CONTENT_W - indent - (options.quote ? 0.2 : 0);
+
+    const runs = mergeRuns(inputRuns);
+
+    if (!runs.map((run) => run.text).join("").trim()) return;
+
+    const lines = wrapRuns(runs, width - 0.08, fontSize);
+    const lineHeight = (fontSize / 72) * LINE_HEIGHT;
+
+    let index = 0;
+
+    while (index < lines.length) {
+      ensureSlide();
+
+      if (y + lineHeight > CONTENT_BOTTOM && hasContent) {
+        nextSlide();
+        continue;
+      }
+
+      const availableLines = Math.max(
         1,
-        Math.floor((remainingH() - 0.14) / lineH(fs)),
+        Math.floor((CONTENT_BOTTOM - y - 0.12) / lineHeight),
       );
-      // If slide is full, go to next slide FIRST (don't draw 1 line + overflow)
-      if (maxLines < 1) {
-        continueSlide();
-        continue;
-      }
-      // If even 1 line doesn't fit because y is at bottom, continue
-      if (y + blockH(1, fs) > CONTENT_BOTTOM && hasContent) {
-        continueSlide();
-        continue;
-      }
-      const pageLines = allLines.slice(idx, idx + maxLines);
-      const h = blockH(pageLines.length, fs);
-      ensureSpace(h);
-      // Recompute after possible continueSlide (y reset)
-      const h2 = blockH(pageLines.length, fs);
-      if (o.quote) {
+
+      const pageLines = lines.slice(index, index + availableLines);
+
+      const height = Math.max(
+        0.18,
+        pageLines.length * lineHeight + 0.1,
+      );
+
+      ensureSpace(height);
+
+      const richRuns: TextRun[] = [];
+
+      pageLines.forEach((line, lineIndex) => {
+        if (lineIndex) {
+          richRuns.push({ text: "\n" });
+        }
+
+        richRuns.push(...line);
+      });
+
+      if (options.quote) {
         slide.addShape(pptx.ShapeType.roundRect, {
           x: MARGIN_X,
-          y,
+          y: y - 0.02,
           w: CONTENT_W,
-          h: h2 + 0.12,
-          rectRadius: 0.08,
-          fill: { color: C.quoteBg },
-          line: { color: C.quoteBg, transparency: 100 },
-          objectName: "Document Conversion Quote Background",
+          h: height + 0.06,
+          rectRadius: 0.06,
+          line: {
+            color: COLORS.quoteBackground,
+            transparency: 100,
+          },
+          fill: { color: COLORS.quoteBackground },
         });
+
         slide.addShape(pptx.ShapeType.rect, {
           x: MARGIN_X,
-          y: y + 0.02,
+          y,
           w: 0.055,
-          h: Math.max(0.2, h2 - 0.04),
-          fill: { color: C.accent },
-          line: { color: C.accent, transparency: 100 },
-          objectName: "Document Conversion Quote Accent",
+          h: height,
+          line: {
+            color: COLORS.primary,
+            transparency: 100,
+          },
+          fill: { color: COLORS.primary },
         });
       }
-      // Convert lines back to pptxgenjs runs with explicit line breaks.
-      // NO fit:"shrink" — height is exact, so nothing overflows.
-      const pptxRuns: PptxGenJS.TextProps[] = [];
-      pageLines.forEach((line, li) => {
-        const lineRuns =
-          idx + li === 0
-            ? line
-            : line.map((run) => ({ ...run, bullet: undefined }));
-        pptxRuns.push(...toPptxTextRuns(lineRuns));
-        if (li < pageLines.length - 1)
-          pptxRuns.push({ text: "", options: { breakLine: true } });
-      });
-      slide.addText(pptxRuns, {
-        x,
-        y: y + (o.quote ? 0.06 : 0),
-        w,
-        h: h2,
-        fontFace: FONT,
-        fontSize: fs,
-        color: o.color ?? C.body,
-        margin: 0.02,
-        breakLine: true,
-        valign: "top",
-        align: o.align,
-        lineSpacingMultiple: 1.15,
-        paraSpaceAfter: 2,
-        ...(o.listLevel !== undefined
-          ? { objectName: `Document Conversion List Item level ${o.listLevel}` }
-          : {}),
-      });
-      y += h2 + GAP;
+
+      slide.addText(
+        richRuns.map((run) => ({
+          text: run.text,
+          options: {
+            fontFace: FONT,
+            fontSize,
+            color: options.color ?? COLORS.body,
+            ...run.options,
+            bold: options.bold || run.options?.bold,
+            italic: options.italic || run.options?.italic,
+          },
+        })),
+        {
+          x,
+          y,
+          w: width,
+          h: height,
+          fontFace: FONT,
+          fontSize,
+          color: options.color ?? COLORS.body,
+          margin: 0.03,
+          valign: "top",
+          align: options.align ?? "left",
+          breakLine: false,
+          fit: "shrink",
+        },
+      );
+
+      y += height + GAP;
       hasContent = true;
-      idx += pageLines.length;
-      if (idx < allLines.length) continueSlide();
+      index += pageLines.length;
+
+      if (index < lines.length) {
+        nextSlide();
+      }
     }
+  }
+
+  function drawText(
+    text: string,
+    options: {
+      fontSize?: number;
+      color?: string;
+      bold?: boolean;
+      italic?: boolean;
+      align?: "left" | "center" | "right" | "justify";
+      indent?: number;
+      quote?: boolean;
+    } = {},
+  ) {
+    const value = cleanText(text);
+
+    if (!value.trim()) return;
+
+    drawRuns([{ text: value }], options);
   }
 
   function addHeading(text: string, level: number) {
-    const runs = inlineRuns(marked.lexer(text, { breaks: true }) as Token[]);
-    const title = plainText(runs) || "Untitled section";
-    if (level === 1) {
-      if (slideNo === 0)
-        addTitleSlide(title, "Converted from Markdown", runs);
-      else addContentSlide(title, runs);
+    const value = cleanText(text).trim();
+
+    if (!value) return;
+
+    if (level === 1 && slideNumber === 0) {
+      addTitleSlide(value);
       return;
     }
-    if (level === 2) {
-      addContentSlide(title, runs);
+
+    if (level <= 2) {
+      addContentSlide(value);
       return;
     }
-    const sizes: Record<number, number> = { 3: 22, 4: 20, 5: 18, 6: 16 };
-    drawTextBlock(runs, {
-      fontSize: sizes[level] ?? 16,
+
+    const sizes: Record<number, number> = {
+      3: FONT_SIZE.h3,
+      4: FONT_SIZE.h4,
+      5: FONT_SIZE.h5,
+      6: FONT_SIZE.h6,
+    };
+
+    drawText(value, {
+      fontSize: sizes[level] ?? FONT_SIZE.h6,
+      color: COLORS.primary,
       bold: true,
-      color: C.primary,
     });
   }
 
-  function addCodeBlock(code: string, lang = "") {
-    ensureSlide();
-    const fs = 10;
-    // Wrap code to fit width using measured Consolas width (no horizontal overflow)
-    const maxW = CONTENT_W - 0.4;
-    const rawLines = code.replace(/\t/g, "  ").split("\n");
-    const wrapped: string[] = [];
-    for (const l of rawLines) {
-      if (!l) {
-        wrapped.push("");
+  function addCodeBlock(code: string, language = "") {
+    const fontSize = FONT_SIZE.code;
+    const padding = 0.22;
+    const maxWidth = CONTENT_W - padding * 2;
+
+    const lines = cleanText(code)
+      .split("\n")
+      .flatMap((line) =>
+        line
+          ? wrapPlainText(line, maxWidth, fontSize, MONO)
+          : [""],
+      );
+
+    const lineHeight = 0.19;
+    let index = 0;
+
+    while (index < lines.length) {
+      ensureSlide();
+
+      if (y + 0.5 > CONTENT_BOTTOM && hasContent) {
+        nextSlide();
         continue;
       }
-      let rest = l;
-      while (measureWidth(rest, fs, false, FONT_MONO) > maxW) {
-        let lo = 1,
-          hi = rest.length;
-        while (lo < hi) {
-          const mid = Math.ceil((lo + hi) / 2);
-          if (measureWidth(rest.slice(0, mid), fs, false, FONT_MONO) <= maxW)
-            lo = mid;
-          else hi = mid - 1;
-        }
-        wrapped.push(rest.slice(0, Math.max(1, lo)));
-        rest = rest.slice(Math.max(1, lo));
-      }
-      wrapped.push(rest);
-    }
-    const lh = 0.22;
-    let idx = 0;
-    if (!wrapped.length) wrapped.push("");
-    while (idx < wrapped.length) {
-      const maxLines = Math.max(1, Math.floor((remainingH() - 0.42) / lh));
-      if (y + 0.55 > CONTENT_BOTTOM && hasContent) {
-        continueSlide();
-        continue;
-      }
-      const page = wrapped.slice(idx, idx + maxLines);
-      const h = Math.min(CONTENT_H, page.length * lh + 0.42);
-      ensureSpace(h);
+
+      const available = Math.max(
+        1,
+        Math.floor((CONTENT_BOTTOM - y - 0.35) / lineHeight),
+      );
+
+      const pageLines = lines.slice(index, index + available);
+      const height = pageLines.length * lineHeight + 0.36;
+
+      ensureSpace(height);
+
       slide.addShape(pptx.ShapeType.roundRect, {
         x: MARGIN_X,
         y,
         w: CONTENT_W,
-        h,
-        rectRadius: 0.06,
-        fill: { color: C.codeBg },
-        line: { color: C.border, width: 0.5 },
-        objectName: "Document Conversion Code Block",
+        h: height,
+        rectRadius: 0.05,
+        line: { color: COLORS.border, width: 0.6 },
+        fill: { color: COLORS.codeBackground },
       });
-      if (lang)
-        slide.addText(lang.toUpperCase(), {
-          x: MARGIN_X + 0.2,
-          y: y + 0.08,
-          w: CONTENT_W - 0.4,
-          h: 0.18,
+
+      if (language) {
+        slide.addText(language.toUpperCase(), {
+          x: MARGIN_X + padding,
+          y: y + 0.07,
+          w: CONTENT_W - padding * 2,
+          h: 0.15,
           fontFace: FONT,
           fontSize: 7,
           bold: true,
-          color: C.muted,
+          color: COLORS.muted,
           margin: 0,
         });
-      // One textbox, exact height, breakLine:true — no overflow
-      slide.addText(page.join("\n"), {
-        x: MARGIN_X + 0.2,
-        y: y + 0.28,
-        w: CONTENT_W - 0.4,
-        h: Math.max(0.22, h - 0.34),
-        fontFace: FONT_MONO,
-        fontSize: fs,
-        color: C.primary,
+      }
+
+      slide.addText(pageLines.join("\n"), {
+        x: MARGIN_X + padding,
+        y: y + 0.23,
+        w: CONTENT_W - padding * 2,
+        h: Math.max(0.16, height - 0.28),
+        fontFace: MONO,
+        fontSize,
+        color: "334155",
         margin: 0,
-        breakLine: true,
         valign: "top",
+        breakLine: false,
+        fit: "shrink",
       });
-      y += h + GAP;
+
+      y += height + GAP;
       hasContent = true;
-      idx += page.length;
-      if (idx < wrapped.length) continueSlide();
+      index += pageLines.length;
+
+      if (index < lines.length) {
+        nextSlide();
+      }
     }
   }
 
-  function addChart(code: string) {
-    let chart: MarkdownChart;
+  async function addImage(src: string, alt = "Image") {
     try {
-      chart = JSON.parse(code) as MarkdownChart;
-    } catch {
-      throw new Error("The pptx-chart block must contain valid JSON.");
-    }
+      const data = await resolveImage(src);
 
-    const allowedTypes = ["bar", "line", "pie", "doughnut", "area"];
-    if (
-      !chart ||
-      !allowedTypes.includes(chart.type) ||
-      !Array.isArray(chart.categories) ||
-      chart.categories.length === 0 ||
-      chart.categories.some((category) => typeof category !== "string") ||
-      !Array.isArray(chart.series) ||
-      chart.series.length === 0 ||
-      chart.series.some(
-        (series) =>
-          !series ||
-          typeof series !== "object" ||
-          typeof series.name !== "string" ||
-          !Array.isArray(series.values) ||
-          series.values.length !== chart.categories.length ||
-          series.values.some(
-            (value) => typeof value !== "number" || !Number.isFinite(value),
-          ),
-      )
-    ) {
-      throw new Error(
-        "The pptx-chart block requires categories and series with matching numeric values.",
+      const dimensions = await new Promise<{
+        width: number;
+        height: number;
+      }>((resolve, reject) => {
+        const image = new Image();
+
+        image.onload = () => {
+          resolve({
+            width: image.naturalWidth,
+            height: image.naturalHeight,
+          });
+        };
+
+        image.onerror = () => reject(new Error("Unable to decode image."));
+        image.src = data;
+      });
+
+      const scale = Math.min(
+        CONTENT_W / dimensions.width,
+        (CONTENT_BOTTOM - CONTENT_TOP) / dimensions.height,
+        1,
       );
-    }
-    if (
-      (chart.barDir !== undefined &&
-        chart.barDir !== "bar" &&
-        chart.barDir !== "col") ||
-      (chart.title !== undefined && typeof chart.title !== "string")
-    ) {
-      throw new Error("The pptx-chart block contains unsupported chart options.");
-    }
-    if (chart.type === "pie" || chart.type === "doughnut") {
-      if (chart.series.length !== 1) {
-        throw new Error(
-          "Pie and doughnut charts require exactly one data series.",
-        );
-      }
-    }
 
-    ensureSlide();
-    const h = Math.min(4.4, Math.max(2.6, remainingH() - 0.2));
-    ensureSpace(h + GAP);
-    slide.addChart(
-      chart.type,
-      chart.series.map((series) => ({
-        name: series.name,
-        labels: chart.categories,
-        values: series.values,
-      })),
-      {
+      const width = dimensions.width * scale;
+      const height = dimensions.height * scale;
+
+      ensureSlide();
+      ensureSpace(height + GAP);
+
+      if (y + height > CONTENT_BOTTOM && hasContent) {
+        nextSlide();
+      }
+
+      slide.addImage({
+        data,
+        x: MARGIN_X + (CONTENT_W - width) / 2,
+        y,
+        w: width,
+        h: height,
+        altText: alt,
+      });
+
+      y += height + GAP;
+      hasContent = true;
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to load image.";
+
+      warnings.push(`${alt}: ${message}`);
+
+      drawText(`[Image unavailable: ${alt}]`, {
+        color: COLORS.muted,
+        italic: true,
+        fontSize: 11,
+      });
+    }
+  }
+
+  function getCellHeight(text: string, width: number): number {
+    const lines = wrapPlainText(
+      text,
+      Math.max(0.3, width - 0.16),
+      10,
+    );
+
+    return Math.max(0.34, lines.length * 0.18 + 0.16);
+  }
+
+  function addMarkdownTable(token: Tokens.Table) {
+    const headers = token.header;
+    const rows = token.rows;
+    const columnCount = Math.max(1, headers.length);
+    const allRows = [headers, ...rows];
+
+    const maxLengths = Array.from(
+      { length: columnCount },
+      (_, index) =>
+        Math.max(
+          5,
+          ...allRows.map((row) =>
+            getPlainText(row[index]?.tokens as Token[] ?? []).length,
+          ),
+        ),
+    );
+
+    const totalLength = maxLengths.reduce((sum, value) => sum + value, 0);
+
+    const colWidths = maxLengths.map(
+      (value) => (value / totalLength) * CONTENT_W,
+    );
+
+    const normalizedRows = allRows.map((row) =>
+      Array.from({ length: columnCount }, (_, index) => row[index]),
+    );
+
+    const rowHeights = normalizedRows.map((row) =>
+      Math.max(
+        0.34,
+        ...row.map((cell, index) =>
+          getCellHeight(
+            getPlainText(cell?.tokens as Token[] ?? []),
+            colWidths[index],
+          ),
+        ),
+      ),
+    );
+
+    const availableHeight = CONTENT_BOTTOM - CONTENT_TOP;
+    let start = 0;
+
+    while (start < normalizedRows.length) {
+      const repeatedHeader = start > 0;
+      const chunk: number[] = [];
+      let usedHeight = 0;
+
+      if (repeatedHeader) {
+        chunk.push(0);
+        usedHeight += rowHeights[0];
+      }
+
+      let cursor = start === 0 ? 0 : 1;
+
+      while (
+        cursor < normalizedRows.length &&
+        usedHeight + rowHeights[cursor] <= availableHeight
+      ) {
+        chunk.push(cursor);
+        usedHeight += rowHeights[cursor];
+        cursor++;
+      }
+
+      if (!chunk.length) {
+        chunk.push(start);
+        cursor = start + 1;
+        usedHeight = rowHeights[start];
+      }
+
+      ensureSlide();
+
+      if (y + usedHeight > CONTENT_BOTTOM && hasContent) {
+        nextSlide();
+      }
+
+      const tableRows = chunk.map((rowIndex) =>
+        normalizedRows[rowIndex].map((cell, columnIndex) => {
+          const isHeader = rowIndex === 0;
+          const runs = cell
+            ? inlineRuns(cell.tokens as Token[])
+            : [];
+
+          const richText = runs.length
+            ? runs.map((run) => ({
+                text: run.text,
+                options: {
+                  ...run.options,
+                  fontFace: FONT,
+                  fontSize: 10,
+                  color: isHeader ? "FFFFFF" : COLORS.body,
+                  bold: isHeader || Boolean(run.options?.bold),
+                },
+              }))
+            : [{ text: "", options: {} }];
+
+          return {
+            text: richText,
+            options: {
+              fill: {
+                color: isHeader
+                  ? COLORS.primary
+                  : rowIndex % 2 === 0
+                    ? COLORS.tableAlternate
+                    : COLORS.background,
+              },
+              fontFace: FONT,
+              fontSize: 10,
+              color: isHeader ? "FFFFFF" : COLORS.body,
+              bold: isHeader,
+              align: token.align?.[columnIndex] ?? "left",
+              valign: "middle",
+              margin: 0.07,
+            },
+          };
+        }),
+      );
+
+      const actualHeight = chunk.reduce(
+        (sum, rowIndex) => sum + rowHeights[rowIndex],
+        0,
+      );
+
+      slide.addTable(tableRows as any, {
         x: MARGIN_X,
         y,
         w: CONTENT_W,
-        h,
-        showTitle: Boolean(chart.title),
-        ...(chart.title ? { title: chart.title } : {}),
-        ...(chart.type === "bar" && chart.barDir
-          ? { barDir: chart.barDir }
-          : {}),
-        showLegend: chart.series.length > 1,
-        showValue: false,
-      },
+        colW: colWidths,
+        rowH: chunk.map((rowIndex) => rowHeights[rowIndex]),
+        fontFace: FONT,
+        fontSize: 10,
+        color: COLORS.body,
+        border: {
+          type: "solid",
+          color: COLORS.border,
+          pt: 0.7,
+        },
+        margin: 0.07,
+        valign: "middle",
+        autoPage: false,
+      } as any);
+
+      y += actualHeight + GAP;
+      hasContent = true;
+      start = cursor;
+
+      if (start < normalizedRows.length) {
+        nextSlide();
+      }
+    }
+  }
+
+  function readHtmlCell(cell: HTMLTableCellElement): HtmlTableCell {
+    const runs = htmlInlineRuns(cell);
+    const alignValue =
+      cell.getAttribute("align") ||
+      cell.style.textAlign ||
+      "left";
+
+    const align = ["left", "center", "right"].includes(alignValue)
+      ? (alignValue as "left" | "center" | "right")
+      : "left";
+
+    return {
+      runs,
+      text: runs.map((run) => run.text).join(""),
+      colspan: Math.max(1, cell.colSpan || 1),
+      rowspan: Math.max(1, cell.rowSpan || 1),
+      header:
+        cell.tagName.toLowerCase() === "th" ||
+        cell.closest("thead") !== null,
+      align,
+    };
+  }
+
+  function addHtmlTable(table: HTMLTableElement) {
+    const sourceRows = Array.from(table.rows);
+
+    if (!sourceRows.length) return;
+
+    const grid: Array<Array<HtmlTableCell | null>> = [];
+    const rowCount = sourceRows.length;
+    let columnCount = 0;
+
+    sourceRows.forEach((row, rowIndex) => {
+      grid[rowIndex] ??= [];
+      let columnIndex = 0;
+
+      for (const sourceCell of Array.from(row.cells)) {
+        while (grid[rowIndex][columnIndex] !== undefined) {
+          columnIndex++;
+        }
+
+        const cell = readHtmlCell(sourceCell);
+        const colspan = cell.colspan;
+        const rowspan = Math.min(cell.rowspan, rowCount - rowIndex);
+
+        grid[rowIndex][columnIndex] = cell;
+
+        for (let r = rowIndex; r < rowIndex + rowspan; r++) {
+          grid[r] ??= [];
+
+          for (let c = columnIndex; c < columnIndex + colspan; c++) {
+            if (r === rowIndex && c === columnIndex) continue;
+            grid[r][c] = null;
+          }
+        }
+
+        columnIndex += colspan;
+        columnCount = Math.max(columnCount, columnIndex);
+      }
+    });
+
+    columnCount = Math.max(1, columnCount);
+
+    const widths = Array(columnCount).fill(CONTENT_W / columnCount);
+
+    const rowHeights = sourceRows.map((row, rowIndex) => {
+      const cells = Array.from(row.cells);
+
+      return Math.max(
+        0.34,
+        ...cells.map((sourceCell) => {
+          const value = readHtmlCell(sourceCell);
+          const cellWidth =
+            widths.reduce((sum, item) => sum + item, 0) /
+            Math.max(1, cells.length);
+
+          return getCellHeight(value.text, cellWidth);
+        }),
+      );
+    });
+
+    const rowsPerPage = Math.max(
+      1,
+      Math.floor((CONTENT_BOTTOM - CONTENT_TOP) / 0.55),
     );
-    y += h + GAP;
+
+    let start = 0;
+
+    while (start < rowCount) {
+      ensureSlide();
+
+      const chunkEnd = Math.min(rowCount, start + rowsPerPage);
+      const chunkHeight = rowHeights
+        .slice(start, chunkEnd)
+        .reduce((a, b) => a + b, 0);
+
+      if (y + chunkHeight > CONTENT_BOTTOM && hasContent) {
+        nextSlide();
+      }
+
+      const tableRows: any[] = [];
+
+      for (let r = start; r < chunkEnd; r++) {
+        const row: any[] = [];
+
+        for (let c = 0; c < columnCount; c++) {
+          const cell = grid[r]?.[c];
+
+          // Keep every logical column in every row.
+          // Merged cells are flattened into their visible grid slots.
+          if (cell === null || !cell) {
+            row.push({
+              text: "",
+              options: {
+                fill: {
+                  color: r % 2 === 0
+                    ? COLORS.tableAlternate
+                    : COLORS.background,
+                },
+                fontFace: FONT,
+                fontSize: 9,
+                color: COLORS.body,
+                margin: 0.06,
+                valign: "middle",
+              },
+            });
+
+            continue;
+          }
+
+          const isHeader = cell.header;
+
+          const richText = cell.runs.length
+            ? cell.runs.map((run) => ({
+                text: run.text,
+                options: {
+                  ...run.options,
+                  fontFace: FONT,
+                  fontSize: 9,
+                  color: isHeader ? "FFFFFF" : COLORS.body,
+                  bold: isHeader || Boolean(run.options?.bold),
+                },
+              }))
+            : [{ text: "", options: {} }];
+
+          row.push({
+            text: richText,
+            options: {
+              fill: {
+                color: isHeader
+                  ? COLORS.primary
+                  : r % 2 === 0
+                    ? COLORS.tableAlternate
+                    : COLORS.background,
+              },
+              fontFace: FONT,
+              fontSize: 9,
+              color: isHeader ? "FFFFFF" : COLORS.body,
+              bold: isHeader,
+              align: cell.align,
+              valign: "middle",
+              margin: 0.06,
+            },
+          });
+        }
+
+        tableRows.push(row);
+      }
+
+      slide.addTable(tableRows, {
+        x: MARGIN_X,
+        y,
+        w: CONTENT_W,
+        colW: widths,
+        rowH: rowHeights.slice(start, chunkEnd),
+        fontFace: FONT,
+        fontSize: 9,
+        border: {
+          type: "solid",
+          color: COLORS.border,
+          pt: 0.7,
+        },
+        margin: 0.06,
+        valign: "middle",
+        autoPage: false,
+      } as any);
+
+      y += chunkHeight + GAP;
+      hasContent = true;
+      start = chunkEnd;
+
+      if (start < rowCount) {
+        nextSlide();
+      }
+    }
+  }
+
+  function htmlInlineRuns(element: Element): TextRun[] {
+    const output: TextRun[] = [];
+
+    function visit(node: Node, inherited: Record<string, any> = {}) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        if (node.textContent) {
+          output.push({
+            text: node.textContent,
+            options: { ...inherited },
+          });
+        }
+
+        return;
+      }
+
+      if (node.nodeType !== Node.ELEMENT_NODE) return;
+
+      const child = node as HTMLElement;
+      const tag = child.tagName.toLowerCase();
+      const style = { ...inherited };
+
+      if (["strong", "b"].includes(tag)) style.bold = true;
+      if (["em", "i"].includes(tag)) style.italic = true;
+      if (tag === "u") style.underline = true;
+      if (["s", "del", "strike"].includes(tag)) style.strike = true;
+
+      if (tag === "code") {
+        style.fontFace = MONO;
+        style.color = "B42318";
+      }
+
+      if (tag === "a") {
+        const href = safeUrl(child.getAttribute("href") ?? "");
+
+        if (href) {
+          style.hyperlink = { url: href };
+          style.color = COLORS.primary;
+          style.underline = { color: COLORS.primary };
+        }
+      }
+
+      if (tag === "span") {
+        const color = child.style.color;
+
+        if (color && /^#[0-9a-f]{3,8}$/i.test(color)) {
+          style.color = color.slice(1);
+        }
+
+        if (child.style.fontWeight === "bold") style.bold = true;
+        if (child.style.fontStyle === "italic") style.italic = true;
+
+        if (child.style.textDecoration.includes("underline")) {
+          style.underline = true;
+        }
+      }
+
+      if (tag === "br") {
+        output.push({ text: "\n", options: style });
+        return;
+      }
+
+      for (const nested of Array.from(child.childNodes)) {
+        visit(nested, style);
+      }
+    }
+
+    for (const node of Array.from(element.childNodes)) {
+      visit(node);
+    }
+
+    return mergeRuns(output);
+  }
+
+  async function renderHtmlNode(element: Element): Promise<void> {
+    const tag = element.tagName.toLowerCase();
+
+    if (/^h[1-6]$/.test(tag)) {
+      addHeading(element.textContent ?? "", Number(tag[1]));
+      return;
+    }
+
+    if (tag === "table") {
+      addHtmlTable(element as HTMLTableElement);
+      return;
+    }
+
+    if (tag === "svg") {
+      const svg = element.cloneNode(true) as SVGElement;
+
+      if (!svg.getAttribute("xmlns")) {
+        svg.setAttribute("xmlns", "http://www.w3.org/2000/svg");
+      }
+
+      const markup = new XMLSerializer().serializeToString(svg);
+
+      await addImage(
+        `data:image/svg+xml,${encodeURIComponent(markup)}`,
+        svg.getAttribute("aria-label") ?? "SVG graphic",
+      );
+
+      return;
+    }
+
+    if (tag === "img") {
+      const image = element as HTMLImageElement;
+      const src = image.getAttribute("src");
+
+      if (src) {
+        await addImage(src, image.alt || "HTML image");
+      }
+
+      return;
+    }
+
+    if (tag === "pre") {
+      const code = element.querySelector("code");
+      const language =
+        code?.className.match(/language-([\w-]+)/)?.[1] ?? "";
+
+      const value = code?.textContent ?? element.textContent ?? "";
+
+      await renderCode(value, language);
+      return;
+    }
+
+    if (tag === "p") {
+      const images = Array.from(element.querySelectorAll("img"));
+      const clone = element.cloneNode(true) as HTMLElement;
+
+      clone.querySelectorAll("img").forEach((image) => image.remove());
+
+      drawRuns(htmlInlineRuns(clone));
+
+      for (const image of images) {
+        const src = image.getAttribute("src");
+
+        if (src) {
+          await addImage(
+            src,
+            image.getAttribute("alt") ?? "HTML image",
+          );
+        }
+      }
+
+      return;
+    }
+
+    if (tag === "blockquote") {
+      for (const child of Array.from(element.children)) {
+        if (child.tagName.toLowerCase() === "p") {
+          drawRuns(htmlInlineRuns(child), { quote: true });
+        } else {
+          await renderHtmlNode(child);
+        }
+      }
+
+      return;
+    }
+
+    if (tag === "ul" || tag === "ol") {
+      const items = Array.from(element.children).filter(
+        (child) => child.tagName.toLowerCase() === "li",
+      );
+
+      for (const [index, item] of items.entries()) {
+        const prefix = tag === "ol" ? `${index + 1}. ` : "• ";
+
+        drawRuns([
+          {
+            text: prefix,
+            options: {
+              bold: true,
+              color: COLORS.primary,
+            },
+          },
+          ...htmlInlineRuns(item),
+        ]);
+      }
+
+      return;
+    }
+
+    if (tag === "hr") {
+      ensureSlide();
+      ensureSpace(0.22);
+
+      slide.addShape(pptx.ShapeType.line, {
+        x: MARGIN_X,
+        y: y + 0.03,
+        w: CONTENT_W,
+        h: 0,
+        line: { color: COLORS.border, width: 1 },
+      });
+
+      y += 0.22;
+      hasContent = true;
+      return;
+    }
+
+    if (tag === "br") {
+      drawRuns([{ text: "\n" }]);
+      return;
+    }
+
+    if (["script", "style", "input", "meta", "link"].includes(tag)) {
+      return;
+    }
+
+    if (
+      ["div", "section", "article", "main", "figure", "header", "footer"].includes(tag)
+    ) {
+      for (const child of Array.from(element.children)) {
+        await renderHtmlNode(child);
+      }
+
+      if (!element.children.length && element.textContent?.trim()) {
+        drawRuns(htmlInlineRuns(element));
+      }
+
+      return;
+    }
+
+    if (element.children.length) {
+      drawRuns(htmlInlineRuns(element));
+    } else if (element.textContent?.trim()) {
+      drawRuns(htmlInlineRuns(element));
+    }
+  }
+
+  async function renderHtml(html: string) {
+    const parser = new DOMParser();
+    const parsed = parser.parseFromString(html, "text/html");
+
+    for (const node of Array.from(parsed.body.childNodes)) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        const value = node.textContent?.trim();
+
+        if (value) drawText(value);
+      } else if (node instanceof Element) {
+        await renderHtmlNode(node);
+      }
+    }
+  }
+
+  function addChart(config: Record<string, any>) {
+    const typeName = String(
+      config.type ?? config.chartType ?? "bar",
+    ).toLowerCase();
+
+    const chartTypes: Record<string, any> = {
+      bar: pptx.ChartType.bar,
+      column: pptx.ChartType.bar,
+      line: pptx.ChartType.line,
+      pie: pptx.ChartType.pie,
+      doughnut: pptx.ChartType.doughnut,
+      area: pptx.ChartType.area,
+    };
+
+    const chartType = chartTypes[typeName];
+
+    if (!chartType) {
+      warnings.push(`Unsupported chart type: ${typeName}`);
+      addCodeBlock(JSON.stringify(config, null, 2), "json");
+      return;
+    }
+
+    const categories = config.categories ?? config.labels;
+    let sourceSeries = config.series;
+
+    if (!Array.isArray(sourceSeries) && Array.isArray(config.data)) {
+      sourceSeries = [
+        {
+          name: config.seriesName ?? "Series",
+          values: config.data,
+        },
+      ];
+    }
+
+    if (!Array.isArray(categories) || !Array.isArray(sourceSeries)) {
+      warnings.push("Chart data must include categories and series.");
+      addCodeBlock(JSON.stringify(config, null, 2), "json");
+      return;
+    }
+
+    const series = sourceSeries.map((item: any) => ({
+      name: String(item.name ?? "Series"),
+      labels: categories.map(String),
+      values: (item.values ?? item.data ?? []).map(Number),
+    }));
+
+    const chartHeight = Math.min(4.6, CONTENT_BOTTOM - CONTENT_TOP);
+
+    ensureSlide();
+    ensureSpace(chartHeight + GAP);
+
+    slide.addChart(chartType, series, {
+      x: MARGIN_X + 0.1,
+      y,
+      w: CONTENT_W - 0.2,
+      h: chartHeight,
+      catAxisLabelFontFace: FONT,
+      catAxisLabelFontSize: 10,
+      valAxisLabelFontFace: FONT,
+      valAxisLabelFontSize: 9,
+      showTitle: Boolean(config.title),
+      title: String(config.title ?? ""),
+      showLegend:
+        series.length > 1 ||
+        typeName === "pie" ||
+        typeName === "doughnut",
+      showValue: true,
+      showPercent: typeName === "pie" || typeName === "doughnut",
+      showCatName: false,
+      chartColors: [
+        "087E8B",
+        "16B8C4",
+        "F59E0B",
+        "8B5CF6",
+        "0F766E",
+        "E76F51",
+      ],
+      showBorder: false,
+      ...(typeName === "column"
+        ? {
+            catAxisLabelRotate: 0,
+            valAxisMinVal: 0,
+            catAxisLabelPos: "low",
+            valAxisLabelPos: "nextTo",
+          }
+        : {}),
+      ...(typeName === "bar" || typeName === "column"
+        ? { barDir: typeName === "column" ? "col" : "bar" }
+        : {}),
+    } as any);
+
+    y += chartHeight + GAP;
     hasContent = true;
   }
 
-  function addShape(code: string) {
-    let shape: MarkdownShape;
-    try {
-      shape = JSON.parse(code) as MarkdownShape;
-    } catch {
-      throw new Error("The pptx-shape block must contain valid JSON.");
-    }
-
-    const shapeTypes: Record<string, PptxGenJS.ShapeType> = {
+  function addCustomShape(config: Record<string, any>) {
+    const shapeTypes: Record<string, any> = {
       rect: pptx.ShapeType.rect,
+      rectangle: pptx.ShapeType.rect,
       roundRect: pptx.ShapeType.roundRect,
+      roundedRectangle: pptx.ShapeType.roundRect,
       ellipse: pptx.ShapeType.ellipse,
+      circle: pptx.ShapeType.ellipse,
       diamond: pptx.ShapeType.diamond,
       triangle: pptx.ShapeType.triangle,
+      line: pptx.ShapeType.line,
+      chevron: pptx.ShapeType.chevron,
       hexagon: pptx.ShapeType.hexagon,
       pentagon: pptx.ShapeType.pentagon,
-      parallelogram: pptx.ShapeType.parallelogram,
-      trapezoid: pptx.ShapeType.trapezoid,
+      star5: pptx.ShapeType.star5,
+      arrow: pptx.ShapeType.rightArrow,
+      rightArrow: pptx.ShapeType.rightArrow,
+      leftArrow: pptx.ShapeType.leftArrow,
+      upArrow: pptx.ShapeType.upArrow,
+      downArrow: pptx.ShapeType.downArrow,
     };
-    if (
-      !shape ||
-      typeof shape !== "object" ||
-      !shapeTypes[shape.type] ||
-      ![shape.x, shape.y, shape.w, shape.h].every(Number.isFinite) ||
-      shape.w <= 0 ||
-      shape.h <= 0 ||
-      (shape.fill !== undefined && !/^[0-9a-f]{6}$/i.test(shape.fill)) ||
-      (shape.line !== undefined && !/^[0-9a-f]{6}$/i.test(shape.line)) ||
-      (shape.label !== undefined && typeof shape.label !== "string")
-    ) {
-      throw new Error("The pptx-shape block contains unsupported shape data.");
+
+    const type = shapeTypes[String(config.type ?? "rect")];
+
+    if (!type) {
+      warnings.push(`Unsupported custom shape: ${String(config.type)}`);
+      return;
     }
 
+    const x = MARGIN_X + Number(config.x ?? 0);
+    const shapeY = y + Number(config.y ?? 0);
+    const w = Math.max(0.05, Number(config.w ?? 1));
+    const h = Math.max(0.05, Number(config.h ?? 0.7));
+
     ensureSlide();
-    const x = Math.max(0, Math.min(SW - 0.05, shape.x));
-    const yPosition = Math.max(0, Math.min(7.5 - 0.05, shape.y));
-    const w = Math.max(0.05, Math.min(shape.w, SW - x));
-    const h = Math.max(0.05, Math.min(shape.h, 7.5 - yPosition));
-    slide.addShape(shapeTypes[shape.type], {
+
+    if (y + h + GAP > CONTENT_BOTTOM && hasContent) {
+      nextSlide();
+    }
+
+    const actualY = y + Number(config.y ?? 0);
+
+    slide.addShape(type, {
       x,
-      y: yPosition,
+      y: actualY,
       w,
       h,
-      fill: shape.fill
-        ? { color: shape.fill.toUpperCase() }
-        : { color: "FFFFFF", transparency: 100 },
-      line: shape.line
-        ? { color: shape.line.toUpperCase(), width: 1 }
-        : { color: "000000", transparency: 100 },
-      objectName: "Preserved PowerPoint Shape",
+      fill: {
+        color: String(config.fill ?? COLORS.accent).replace("#", ""),
+        transparency: Number(config.transparency ?? 0),
+      },
+      line: {
+        color: String(config.line ?? COLORS.primary).replace("#", ""),
+        width: Number(config.lineWidth ?? 1.2),
+      },
+      rotate: Number(config.rotate ?? 0),
     });
-    if (shape.label?.trim()) {
-      slide.addText(shape.label, {
-        x: x + 0.08,
-        y: yPosition + 0.04,
-        w: Math.max(0.05, w - 0.16),
-        h: Math.max(0.05, h - 0.08),
+
+    const label = config.label ?? config.text;
+
+    if (label) {
+      slide.addText(String(label), {
+        x,
+        y: actualY + h / 2 - 0.15,
+        w,
+        h: 0.3,
         fontFace: FONT,
-        fontSize: Math.min(bodySize, 18),
-        color: C.primary,
+        fontSize: Number(config.fontSize ?? 11),
+        bold: true,
+        color: String(config.textColor ?? "FFFFFF").replace("#", ""),
         align: "center",
         valign: "middle",
         margin: 0.02,
         fit: "shrink",
       });
     }
+
+    y = Math.max(y, actualY + h + GAP);
     hasContent = true;
   }
 
-  async function resolveImage(src: string): Promise<string> {
-    if (/^data:image\/(png|jpe?g|gif);base64,/.test(src)) return src;
-    if (/^data:image\/webp/i.test(src))
-      throw new Error("WebP not supported — use PNG/JPEG.");
-    if (!/^https?:\/\//i.test(src))
-      throw new Error(`Unsupported image: ${src}`);
-    const res = await fetch(src);
-    if (!res.ok) throw new Error(`Image load failed: ${src}`);
-    const blob = await res.blob();
-    if (!blob.type.startsWith("image/")) throw new Error("URL is not an image");
-    if (blob.size > 8 * 1024 * 1024) throw new Error("Image too large (>8MB)");
-    return new Promise((resolve, reject) => {
-      const fr = new FileReader();
-      fr.onload = () =>
-        typeof fr.result === "string"
-          ? resolve(fr.result)
-          : reject(new Error("read failed"));
-      fr.onerror = () => reject(new Error("read failed"));
-      fr.readAsDataURL(blob);
-    });
-  }
-  function imgSize(data: string) {
-    return new Promise<{ w: number; h: number }>((resolve, reject) => {
-      const im = new Image();
-      im.onload = () => resolve({ w: im.naturalWidth, h: im.naturalHeight });
-      im.onerror = () => reject(new Error("decode failed"));
-      im.src = data;
-    });
-  }
-  async function addImage(tok: Tokens.Image) {
-    ensureSlide();
-    const data = await resolveImage(tok.href);
-    const d = await imgSize(data);
-    const scale = Math.min(CONTENT_W / d.w, (CONTENT_H - 0.2) / d.h, 1);
-    const w = d.w * scale,
-      h = d.h * scale;
-    ensureSpace(h + GAP);
-    slide.addImage({
-      data,
-      x: MARGIN_X + (CONTENT_W - w) / 2,
-      y,
-      w,
-      h,
-      altText: tok.text || "Markdown image",
-    });
-    y += h + GAP;
-    hasContent = true;
+  async function renderMermaid(sourceText: string) {
+    try {
+      const mermaidModule = await import("mermaid");
+      const mermaid = mermaidModule.default;
+
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: "strict",
+        theme: "neutral",
+      });
+
+      const id = `mermaid-${Math.random().toString(36).slice(2)}`;
+      const result = await mermaid.render(id, sourceText);
+
+      await addImage(result.svg, "Mermaid diagram");
+    } catch (error) {
+      warnings.push(
+        `Mermaid rendering failed: ${
+          error instanceof Error ? error.message : "Unknown error"
+        }`,
+      );
+
+      addCodeBlock(sourceText, "mermaid");
+    }
   }
 
-  async function addList(tok: Tokens.List, level = 0) {
-    for (const [i, item] of tok.items.entries()) {
+  async function renderCode(code: string, language = "") {
+    const normalizedLanguage = language.toLowerCase();
+
+    if (normalizedLanguage === "mermaid") {
+      await renderMermaid(code);
+      return;
+    }
+
+    if (normalizedLanguage === "pptx-chart") {
+      const config = parseJson(code);
+
+      if (config) {
+        addChart(config);
+      } else {
+        addCodeBlock(code, language);
+      }
+
+      return;
+    }
+
+    if (normalizedLanguage === "pptx-shape") {
+      const config = parseJson(code);
+
+      if (config) {
+        addCustomShape(config);
+      } else {
+        addCodeBlock(code, language);
+      }
+
+      return;
+    }
+
+    addCodeBlock(code, language);
+  }
+
+  async function addList(token: Tokens.List, level = 0) {
+    for (const [index, item] of token.items.entries()) {
       const prefix = item.task
         ? item.checked
-          ? "[x] "
-          : "[ ] "
-        : "";
-      const bullet: NonNullable<Run["bullet"]> = tok.ordered
-        ? {
-            type: "number",
-            numberStartAt: Number(tok.start || 1) + i,
-          }
-        : { characterCode: "2022" };
+          ? "☑ "
+          : "☐ "
+        : token.ordered
+          ? `${Number(token.start || 1) + index}. `
+          : "• ";
+
       const children = (item.tokens ?? []) as Token[];
-      const imgs = children.filter(isImage);
-      const flushText = (toks: Token[]) => {
-        const runs = inlineRuns(toks);
-        if (!runs.length) return;
-        if (prefix) {
-          runs.unshift({
-            text: prefix,
-            bold: true,
-            color: C.accent,
-            bullet,
-          });
-        } else {
-          runs[0] = { ...runs[0], bullet };
-        }
-        drawTextBlock(runs, { indent: level * 0.32, listLevel: level });
-      };
-      if (!imgs.length)
-        flushText(children.filter((c) => !isList(c)));
-      else {
-        let buf: Token[] = [];
-        for (const c of children) {
-          if (isImage(c)) {
-            if (buf.length) {
-              flushText(buf);
-              buf = [];
-            }
-            await addImage(c);
-          } else if (!isList(c)) buf.push(c);
-        }
-        if (buf.length) flushText(buf);
-      }
-      for (const c of children) if (isList(c)) await addList(c, level + 1);
-    }
-  }
 
-  function addTable(tok: Tokens.Table, metadata?: MarkdownTableMetadata) {
-    ensureSlide();
-    // Column widths proportional to longest content — no squeezed / overflowed column
-    const maxLens = tok.header.map((h, ci) =>
-      Math.max(
-        h.text.length,
-        ...tok.rows.map((r) => (r[ci]?.text ?? "").length),
-        4,
-      ),
-    );
-    const total = maxLens.reduce((a, b) => a + b, 0);
-    const colW = maxLens.map((l) => Math.max(0.9, (CONTENT_W * l) / total));
-    // Normalise to exactly CONTENT_W
-    const sum = colW.reduce((a, b) => a + b, 0);
-    const widths = colW.map((w) => (w / sum) * CONTENT_W);
-    const headers = tok.header.map((c) => c.text);
-    const rows = tok.rows.map((r) => headers.map((_, ci) => r[ci]?.text ?? ""));
-    const fs = Math.min(bodySize, 16); // tables use slightly smaller font to avoid overflow
-    const rowH = (vals: string[]) => {
-      const lines = vals.map((v, ci) => {
-        const linesForCell = wrapRuns(
-          [{ text: v }],
-          widths[ci] - 0.16,
-          fs,
-          FONT,
-        );
-        return Math.max(1, linesForCell.length);
-      });
-      return Math.max(0.5, Math.max(...lines) * lineH(fs) + 0.24);
-    };
-    const headH = rowH(headers);
-    const rowHeights = rows.map(rowH);
-    const makeRow = (
-      vals: string[],
-      isHead: boolean,
-      ri: number,
-    ): PptxGenJS.TableRow =>
-      vals.flatMap((v, ci) => {
-      const cell = metadata?.rows[isHead ? 0 : ri + 1]?.[ci];
-        if (cell?.merged) return [];
-        return [{
-          text: cell?.text ?? v,
-          options: {
-            ...(cell?.colspan && cell.colspan > 1 ? { colspan: cell.colspan } : {}),
-            ...(cell?.rowspan && cell.rowspan > 1 ? { rowspan: cell.rowspan } : {}),
-            bold: isHead,
-            color: C.primary,
-            fill: {
-              color: isHead ? C.tableHead : ri % 2 === 0 ? C.bg : C.tableAlt,
+      const nestedLists = children.filter(
+        (child) => child.type === "list",
+      ) as Tokens.List[];
+
+      const contentTokens = children.filter(
+        (child) => child.type !== "list",
+      );
+
+      const content = inlineRuns(contentTokens);
+
+      if (content.map((run) => run.text).join("").trim()) {
+        drawRuns(
+          [
+            {
+              text: prefix,
+              options: {
+                bold: true,
+                color: COLORS.primary,
+              },
             },
-            align: tok.align?.[ci] ?? "left",
-            valign: "middle",
-            margin: 0.06,
+            ...content,
+          ],
+          {
+            indent: Math.min(level * 0.28, 1.3),
           },
-        }];
-      });
-    let idx = 0;
-    // Header-only table still draws once
-    while (idx < rows.length || idx === 0) {
-      const pageRows: PptxGenJS.TableRow[] = [makeRow(headers, true, 0)];
-      const pageH: number[] = [headH];
-      let totalH = headH;
-      const start = idx;
-      while (
-        idx < rows.length &&
-        totalH + rowHeights[idx] + GAP <= remainingH()
-      ) {
-        pageRows.push(makeRow(rows[idx], false, idx));
-        pageH.push(rowHeights[idx]);
-        totalH += rowHeights[idx];
-        idx++;
+        );
       }
-      if (idx === start && idx < rows.length) {
-        if (hasContent) {
-          continueSlide();
-          continue;
+
+      for (const child of contentTokens) {
+        if (child.type === "image") {
+          const image = child as Tokens.Image;
+
+          await addImage(image.href, image.text || "Markdown image");
         }
-        // Single huge row on fresh slide: clamp (never overflow bottom)
-        pageRows.push(makeRow(rows[idx], false, idx));
-        pageH.push(Math.min(rowHeights[idx], remainingH() - headH));
-        totalH += pageH[pageH.length - 1];
-        idx++;
+
+        if (child.type === "code") {
+          const code = child as Tokens.Code;
+
+          await renderCode(code.text, code.lang ?? "");
+        }
       }
-      slide.addTable(pageRows, {
-        x: MARGIN_X,
-        y,
-        w: CONTENT_W,
-        h: totalH,
-        colW: widths,
-        rowH: pageH,
-        fontFace: FONT,
-        fontSize: fs,
-        color: C.primary,
-        margin: 0.06,
-        border: { type: "solid", color: C.border, pt: 0.7 },
-      });
-      y += totalH + GAP;
-      hasContent = true;
-      if (idx < rows.length) continueSlide();
-      if (!rows.length) break;
+
+      for (const nested of nestedLists) {
+        await addList(nested, level + 1);
+      }
     }
   }
 
-  async function addInline(
-    toks: Token[],
-    o: {
-      quote?: boolean;
-      align?: "left" | "center" | "right" | "justify";
-    } = {},
-  ) {
-    let buf: Token[] = [];
-    const flush = () => {
-      if (buf.length) {
-        drawTextBlock(inlineRuns(buf), {
-          quote: o.quote,
-          align: o.align,
-          italic: o.quote,
-          color: o.quote ? C.body : undefined,
-        });
-        buf = [];
-      }
-    };
-    for (const t of toks) {
-      if (isImage(t)) {
-        flush();
-        await addImage(t);
-      } else buf.push(t);
-    }
-    flush();
-  }
+  async function renderToken(token: Token, quote = false): Promise<void> {
+    switch (token.type) {
+      case "space":
+        y += 0.04;
+        return;
 
-  async function addBlock(tok: Token): Promise<void> {
-    switch (tok.type) {
-      case "heading":
-        addHeading((tok as Tokens.Heading).text, (tok as Tokens.Heading).depth);
-        break;
-      case "paragraph":
-        await addInline((tok as Tokens.Paragraph).tokens ?? [], {
-          align: pendingAlignment,
-        });
-        pendingAlignment = undefined;
-        break;
+      case "heading": {
+        const heading = token as Tokens.Heading;
+
+        addHeading(
+          getPlainText(heading.tokens as Token[]),
+          heading.depth,
+        );
+
+        return;
+      }
+
+      case "paragraph": {
+        const paragraph = token as Tokens.Paragraph;
+        const runs = inlineRuns(paragraph.tokens as Token[]);
+
+        drawRuns(runs, { quote });
+        return;
+      }
+
       case "text": {
-        const t = tok as Tokens.Text;
-        if ("tokens" in t && Array.isArray(t.tokens))
-          await addInline(t.tokens);
-        else if ("text" in t) drawTextBlock([{ text: t.text }]);
-        break;
-      }
-      case "list":
-        if (isList(tok)) await addList(tok);
-        break;
-      case "blockquote":
-        await addInline((tok as Tokens.Blockquote).tokens ?? [], {
-          quote: true,
-        });
-        break;
-      case "code":
-        if ((tok as Tokens.Code).lang?.trim().toLowerCase() === "pptx-chart") {
-          addChart((tok as Tokens.Code).text);
-        } else if ((tok as Tokens.Code).lang?.trim().toLowerCase() === "pptx-shape") {
-          addShape((tok as Tokens.Code).text);
+        const item = token as Tokens.Text;
+
+        if (item.tokens?.length) {
+          drawRuns(inlineRuns(item.tokens as Token[]), { quote });
         } else {
-          addCodeBlock(
-            (tok as Tokens.Code).text,
-            (tok as Tokens.Code).lang ?? "",
-          );
+          drawText(item.text, { quote });
         }
-        break;
+
+        return;
+      }
+
+      case "list":
+        await addList(token as Tokens.List);
+        return;
+
+      case "blockquote": {
+        const blockquote = token as Tokens.Blockquote;
+
+        for (const child of blockquote.tokens as Token[]) {
+          await renderToken(child, true);
+        }
+
+        return;
+      }
+
+      case "code": {
+        const code = token as Tokens.Code;
+
+        await renderCode(code.text, code.lang ?? "");
+        return;
+      }
+
       case "table":
-        if (isTable(tok)) {
-          addTable(tok, pendingTableMetadata);
-          pendingTableMetadata = undefined;
-        }
-        break;
+        addMarkdownTable(token as Tokens.Table);
+        return;
+
       case "hr":
         ensureSlide();
-        ensureSpace(0.32);
+        ensureSpace(0.22);
+
         slide.addShape(pptx.ShapeType.line, {
           x: MARGIN_X,
-          y: y + 0.08,
+          y: y + 0.03,
           w: CONTENT_W,
           h: 0,
-          line: { color: C.border, width: 1 },
-          objectName: "Document Conversion Horizontal Rule",
+          line: { color: COLORS.border, width: 1 },
         });
-        y += 0.32;
+
+        y += 0.22;
         hasContent = true;
-        break;
-      case "space":
+        return;
+
+      case "image": {
+        const image = token as Tokens.Image;
+
+        await addImage(image.href, image.text || "Markdown image");
+        return;
+      }
+
+      case "html": {
+        const html = token as Tokens.HTML;
+
+        await renderHtml(html.text);
+        return;
+      }
+
       case "def":
-      case "html":
-        if ("text" in tok && typeof tok.text === "string") {
-          const alignment = tok.text
-            .trim()
-            .match(/^<!--\s*pptx-align:(left|center|right|justify)\s*-->$/);
-          if (alignment) pendingAlignment = alignment[1] as typeof pendingAlignment;
-          const tableMetadata = tok.text.match(
-            /<!--\s*pptx-table:([A-Za-z0-9+/=]+)\s*-->/,
-          );
-          if (tableMetadata) {
-            try {
-              const binary = atob(tableMetadata[1]);
-              const bytes = Uint8Array.from(binary, (character) =>
-                character.charCodeAt(0),
-              );
-              const parsed = JSON.parse(
-                new TextDecoder().decode(bytes),
-              ) as MarkdownTableMetadata;
-              if (
-                !parsed ||
-                !Array.isArray(parsed.rows) ||
-                parsed.rows.some(
-                  (row) =>
-                    !Array.isArray(row) ||
-                    row.some(
-                      (cell) =>
-                        !cell ||
-                        typeof cell.text !== "string" ||
-                        (cell.colspan !== undefined &&
-                          (!Number.isInteger(cell.colspan) || cell.colspan < 1)) ||
-                        (cell.rowspan !== undefined &&
-                          (!Number.isInteger(cell.rowspan) || cell.rowspan < 1)) ||
-                        (cell.merged !== undefined &&
-                          typeof cell.merged !== "boolean"),
-                    ),
-                )
-              ) {
-                throw new Error("invalid table metadata");
-              }
-              pendingTableMetadata = parsed;
-            } catch {
-              throw new Error("The pptx-table metadata is invalid.");
-            }
+        return;
+
+      default: {
+        if ("tokens" in token && Array.isArray(token.tokens)) {
+          for (const child of token.tokens as Token[]) {
+            await renderToken(child, quote);
           }
-        }
-        break;
-      default:
-        if ("tokens" in tok && Array.isArray(tok.tokens))
-          await addInline(tok.tokens);
-        else if ("text" in tok && typeof tok.text === "string")
-          drawTextBlock([{ text: tok.text }]);
-    }
-  }
-
-  const tokens = marked.lexer(clean, { breaks: true });
-  const slideSegments: Token[][] = [[]];
-  let hasSlideSeparators = false;
-  for (const token of tokens) {
-    const isMarker =
-      token.type === "html" &&
-      "text" in token &&
-      typeof token.text === "string" &&
-      token.text.trim() === "<!-- slide -->";
-    if (isMarker || token.type === "hr") {
-      hasSlideSeparators = true;
-      slideSegments.push([]);
-    } else {
-      slideSegments[slideSegments.length - 1].push(token);
-    }
-  }
-
-  if (hasSlideSeparators) {
-    const segments = [...slideSegments];
-    while (
-      segments.length &&
-      !segments[0].some((token) => token.type !== "space")
-    ) {
-      segments.shift();
-    }
-    while (
-      segments.length &&
-      !segments[segments.length - 1].some((token) => token.type !== "space")
-    ) {
-      segments.pop();
-    }
-    for (const [segmentIndex, segment] of segments.entries()) {
-      const firstHeadingIndex = segment.findIndex(
-        (token) => token.type === "heading",
-      );
-      const titleToken =
-        firstHeadingIndex >= 0
-          ? (segment[firstHeadingIndex] as Tokens.Heading)
-          : undefined;
-      const titleRuns = titleToken
-        ? inlineRuns(marked.lexer(titleToken.text, { breaks: true }) as Token[])
-        : undefined;
-      const title =
-        (titleRuns?.length ? plainText(titleRuns) : titleToken?.text.trim()) ||
-        `Slide ${segmentIndex + 1}`;
-      const nextMeaningfulIndex = segment.findIndex(
-        (token, index) =>
-          index > firstHeadingIndex && token.type !== "space",
-      );
-      const subtitleIndex =
-        segmentIndex === 0 &&
-        titleToken?.depth === 1 &&
-        nextMeaningfulIndex >= 0 &&
-        segment[nextMeaningfulIndex].type === "heading" &&
-        (segment[nextMeaningfulIndex] as Tokens.Heading).depth === 2
-          ? nextMeaningfulIndex
-          : -1;
-      const hasSubtitle =
-        subtitleIndex > firstHeadingIndex &&
-        subtitleIndex < segment.length &&
-        segment[subtitleIndex].type === "heading";
-      const subtitleToken = hasSubtitle
-        ? (segment[subtitleIndex] as Tokens.Heading)
-        : undefined;
-      const subtitleRuns = subtitleToken
-        ? inlineRuns(marked.lexer(subtitleToken.text, { breaks: true }) as Token[])
-        : undefined;
-
-      if (
-        segmentIndex === 0 &&
-        titleToken?.depth === 1 &&
-        slideNo === 0
-      ) {
-        addTitleSlide(
-          title,
-          subtitleToken?.text ?? "Converted from Markdown",
-          titleRuns,
-          subtitleRuns,
-        );
-      } else {
-        addContentSlide(title, titleRuns);
-      }
-
-      for (const [tokenIndex, token] of segment.entries()) {
-        if (
-          tokenIndex === firstHeadingIndex ||
-          (hasSubtitle && tokenIndex === subtitleIndex)
-        ) continue;
-        if (token.type === "heading") {
-          const heading = token as Tokens.Heading;
-          drawTextBlock(inlineRuns(marked.lexer(heading.text, { breaks: true }) as Token[]), {
-            fontSize: ({ 1: 24, 2: 22, 3: 20, 4: 18, 5: 16, 6: 14 })[
-              heading.depth
-            ],
-            bold: true,
-            color: C.primary,
-          });
-        } else {
-          await addBlock(token);
+        } else if ("text" in token && typeof token.text === "string") {
+          drawText(token.text, { quote });
         }
       }
     }
-  } else {
-    const firstHeadingIndex = tokens.findIndex(
-      (token) => token.type === "heading",
-    );
-    const firstHeading =
-      firstHeadingIndex >= 0
-        ? (tokens[firstHeadingIndex] as Tokens.Heading)
-        : undefined;
-    const nextContentIndex = tokens.findIndex(
-      (token, index) =>
-        index > firstHeadingIndex && token.type !== "space",
-    );
-    const subtitle =
-      firstHeading?.depth === 1 &&
-      nextContentIndex >= 0 &&
-      tokens[nextContentIndex].type === "heading" &&
-      (tokens[nextContentIndex] as Tokens.Heading).depth === 2
-        ? (tokens[nextContentIndex] as Tokens.Heading)
-        : undefined;
-    if (firstHeading?.depth === 1 && slideNo === 0) {
-      addTitleSlide(
-        firstHeading.text,
-        subtitle?.text ?? "Converted from Markdown",
-        inlineRuns(marked.lexer(firstHeading.text, { breaks: true }) as Token[]),
-        subtitle
-          ? inlineRuns(marked.lexer(subtitle.text, { breaks: true }) as Token[])
-          : undefined,
-      );
-      for (const [index, token] of tokens.entries()) {
-        if (index === firstHeadingIndex || token === subtitle) continue;
-        await addBlock(token);
-      }
-    } else {
-      for (const token of tokens) await addBlock(token);
-    }
-  }
-  if (slideNo === 0) {
-    addTitleSlide(opts.title ?? "Markdown Presentation");
-    drawTextBlock([
-      { text: "No readable content was found in the Markdown file." },
-    ]);
   }
 
-  const out = await pptx.write({ outputType: "blob" });
-  if (!(out instanceof Blob) || out.size === 0)
-    throw new Error("Could not generate the PowerPoint presentation.");
-  return out;
-}
+  try {
+    for (const token of tokens) {
+      await renderToken(token);
+    }
+
+    if (slideNumber === 0) {
+      addTitleSlide(opts.title ?? "Markdown Presentation");
+
+      drawText("No readable Markdown content was found.", {
+        color: COLORS.muted,
+      });
+    }
+
+    if (warnings.length && slide) {
+      slide.addNotes(
+        `Conversion warnings:\n${warnings
+          .map((warning) => `- ${warning}`)
+          .join("\n")}`,
+      );
+    }
+
+    const output = await pptx.write({
+      outputType: "blob",
+    });
+
+    if (output instanceof Blob) {
+      return output;
+    }
+
+    return new Blob([output as BlobPart], {
+      type: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    });
+  } catch (error) {
+    console.error("Markdown to PowerPoint conversion failed:", error);
+
+    throw new Error(
+      error instanceof Error
+        ? `PowerPoint conversion failed: ${error.message}`
+        : "PowerPoint conversion failed.",
+    );
+  }
+} 
