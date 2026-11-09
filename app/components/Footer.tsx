@@ -4,6 +4,7 @@
 import Link from "next/link";
 import { ArrowUpRight } from "lucide-react";
 import { useTheme } from "./ThemeProvider";
+import Image from "next/image";
 
 const quickLinks = [
   { name: "Home", href: "/" },
@@ -34,13 +35,13 @@ export default function Footer() {
               aria-label="eSparks Document Conversion home"
               className="inline-flex max-w-full items-center"
             >
-              <img
+              <Image
             
-                src={theme === "light" ? "/brand-light.png" : "/brand.png"}
+            src={theme === "light" ? "/brand-light.png" : "/brand.png"}
                 alt="eSparks Document Conversion"
                 width={280}
                 height={56}
-                className="h-auto w-56 max-w-full object-contain"
+                className="h-7 w-70 object-contain"
               />
             </Link>
 
