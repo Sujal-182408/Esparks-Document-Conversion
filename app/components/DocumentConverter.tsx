@@ -93,22 +93,19 @@ const extensions: Record<Format, string> = {
  * Validate URLs before rendering them in Markdown previews.
  * Empty URLs and unsafe protocols are rejected.
  */
-const safeMarkdownUrl = (value?: string): string | undefined => {
-  const url = value?.trim();
+const safeMarkdownUrl = (value?: string | Blob): string | undefined => {
+  if (typeof value !== "string") return undefined;
 
+  const url = value.trim();
   if (!url) return undefined;
 
-  if (/^(https?:\/\/|mailto:|tel:)/i.test(url)) {
+  if (/^(https?:\/\/|mailto:|tel:)/i.test(url)) return url;
+
+  if (/^data:image\/(?:png|jpe?g|gif|webp|svg\+xml);base64,/i.test(url)) {
     return url;
   }
 
-  if (/^(data:image\/(?:png|jpe?g|gif|webp|svg\+xml);base64,)/i.test(url)) {
-    return url;
-  }
-
-  if (/^(blob:|\/|\.\/|\.\.\/|#)/.test(url)) {
-    return url;
-  }
+  if (/^(blob:|\/|\.\/|\.\.\/|#)/.test(url)) return url;
 
   return undefined;
 };
