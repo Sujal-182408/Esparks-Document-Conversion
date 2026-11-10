@@ -664,10 +664,14 @@ function sanitizeSvg(
     throw new Error("SVG root element is missing.");
   }
 
+  // Remove unsafe or unsupported elements.
   parsed
-    .querySelectorAll("script, foreignObject")
+    .querySelectorAll(
+      "script, foreignObject, iframe, object, embed",
+    )
     .forEach((node) => node.remove());
 
+  // Remove event handlers and unsafe external references.
   parsed.querySelectorAll("*").forEach((element) => {
     for (const attribute of Array.from(element.attributes)) {
       const name = attribute.name.toLowerCase();
@@ -679,53 +683,86 @@ function sanitizeSvg(
 
       if (
         ["href", "xlink:href"].includes(name) &&
-        (/^\s*javascript:/i.test(value) ||
-          (/^(https?:)?\/\//i.test(value) &&
-            !/^https?:\/\//i.test(value)))
+        /^(javascript:|https?:\/\/|\/\/)/i.test(value)
       ) {
         element.removeAttribute(attribute.name);
       }
     }
   });
 
-  if (!root.getAttribute("xmlns")) {
-    root.setAttribute(
-      "xmlns",
-      "http://www.w3.org/2000/svg",
-    );
-  }
+  root.setAttribute(
+    "xmlns",
+    "http://www.w3.org/2000/svg",
+  );
 
+  // Always prioritize the actual SVG viewBox.
   const viewBox = root.getAttribute("viewBox");
 
   const viewBoxValues = viewBox
-    ?.split(/[\s,]+/)
+    ?.trim()
+    .split(/[\s,]+/)
     .map(Number);
 
-  let width = Number.parseFloat(
-    root.getAttribute("width") ?? "",
-  );
+  let width = 0;
+  let height = 0;
 
-  let height = Number.parseFloat(
-    root.getAttribute("height") ?? "",
-  );
+  if (
+    viewBoxValues?.length === 4 &&
+    viewBoxValues.every(Number.isFinite) &&
+    viewBoxValues[2] > 0 &&
+    viewBoxValues[3] > 0
+  ) {
+    width = viewBoxValues[2];
+    height = viewBoxValues[3];
+  } else {
+    width = Number.parseFloat(
+      root.getAttribute("width") ?? "",
+    );
 
-  if ((!width || !height) && viewBoxValues?.length === 4) {
-    width ||= viewBoxValues[2];
-    height ||= viewBoxValues[3];
+    height = Number.parseFloat(
+      root.getAttribute("height") ?? "",
+    );
   }
 
-  width = Math.max(
-    1,
-    Math.min(width || 1200, MAX_IMAGE_DIMENSION),
-  );
+  if (!Number.isFinite(width) || width <= 0) {
+    width = 1200;
+  }
 
-  height = Math.max(
-    1,
-    Math.min(height || 800, MAX_IMAGE_DIMENSION),
-  );
+  if (!Number.isFinite(height) || height <= 0) {
+    height = 800;
+  }
+
+  // Preserve the original aspect ratio.
+  const ratio = width / height;
+
+  if (width > MAX_IMAGE_DIMENSION) {
+    width = MAX_IMAGE_DIMENSION;
+    height = width / ratio;
+  }
+
+  if (height > MAX_IMAGE_DIMENSION) {
+    height = MAX_IMAGE_DIMENSION;
+    width = height * ratio;
+  }
+
+  width = Math.max(1, Math.round(width));
+  height = Math.max(1, Math.round(height));
+
+  // Create a viewBox if Mermaid did not provide one.
+  if (!viewBox) {
+    root.setAttribute(
+      "viewBox",
+      `0 0 ${width} ${height}`,
+    );
+  }
 
   root.setAttribute("width", String(width));
   root.setAttribute("height", String(height));
+
+  root.setAttribute(
+    "preserveAspectRatio",
+    "xMidYMid meet",
+  );
 
   return {
     markup: new XMLSerializer().serializeToString(parsed),
@@ -734,7 +771,9 @@ function sanitizeSvg(
   };
 }
 
-async function svgToPng(svg: string): Promise<string> {
+async function svgToPng(
+  svg: string,
+): Promise<string> {
   const safe = sanitizeSvg(svg);
 
   const blob = new Blob(
@@ -753,35 +792,35 @@ async function svgToPng(svg: string): Promise<string> {
       image.onload = () => resolve();
 
       image.onerror = () => {
-        reject(new Error("Unable to render SVG."));
+        reject(
+          new Error("Unable to render Mermaid SVG."),
+        );
       };
 
       image.src = objectUrl;
     });
 
+    // Use the sanitized dimensions as the source of truth.
+    const sourceWidth = safe.width;
+    const sourceHeight = safe.height;
+
+    // Render at higher resolution for better PowerPoint quality.
     const scale = Math.min(
       2,
       MAX_IMAGE_DIMENSION /
-        Math.max(
-          image.naturalWidth || safe.width,
-          image.naturalHeight || safe.height,
-        ),
+        Math.max(sourceWidth, sourceHeight),
     );
 
     const canvas = document.createElement("canvas");
 
     canvas.width = Math.max(
       1,
-      Math.round(
-        (image.naturalWidth || safe.width) * scale,
-      ),
+      Math.round(sourceWidth * scale),
     );
 
     canvas.height = Math.max(
       1,
-      Math.round(
-        (image.naturalHeight || safe.height) * scale,
-      ),
+      Math.round(sourceHeight * scale),
     );
 
     const context = canvas.getContext("2d");
@@ -789,6 +828,13 @@ async function svgToPng(svg: string): Promise<string> {
     if (!context) {
       throw new Error("Canvas is unavailable.");
     }
+
+    context.clearRect(
+      0,
+      0,
+      canvas.width,
+      canvas.height,
+    );
 
     context.drawImage(
       image,
@@ -1293,36 +1339,70 @@ async function renderMermaidSvg(
     mermaid.initialize({
       startOnLoad: false,
       securityLevel: "strict",
+
       theme: "base",
       fontFamily: "Arial",
 
+      // Consistent colors and typography.
       themeVariables: {
         fontFamily: "Arial",
+
         primaryColor: "#E0F2FE",
         primaryTextColor: "#263238",
         primaryBorderColor: "#087E8B",
+
         lineColor: "#64748B",
+
         secondaryColor: "#CCFBF1",
         tertiaryColor: "#F1F5F9",
+
         background: "#FFFFFF",
         mainBkg: "#E0F2FE",
+
         nodeBorder: "#087E8B",
+
         clusterBkg: "#F1F5F9",
         clusterBorder: "#CBD5E1",
+
         edgeLabelBackground: "#FFFFFF",
       },
 
+      // Flowchart configuration.
       flowchart: {
         htmlLabels: false,
         curve: "basis",
         padding: 15,
         useMaxWidth: false,
+        nodeSpacing: 40,
+        rankSpacing: 50,
       },
 
+      // Sequence diagram configuration.
       sequence: {
         useMaxWidth: false,
         diagramMarginX: 30,
         diagramMarginY: 20,
+        actorMargin: 60,
+        messageMargin: 35,
+      },
+
+      // Gantt chart configuration.
+      gantt: {
+        barHeight: 16,
+        barGap: 4,
+        topPadding: 30,
+        leftPadding: 75,
+        rightPadding: 25,
+        gridLineStartPadding: 35,
+        fontSize: 12,
+        sectionFontSize: 13,
+        numberSectionStyles: 4,
+      },
+
+      // Pie chart configuration.
+      pie: {
+        useWidth: 450,
+        useHeight: 350,
       },
     });
 
@@ -1331,12 +1411,21 @@ async function renderMermaidSvg(
 
   const id = `mermaid-diagram-${++mermaidCounter}`;
 
-  const result = await mermaid.render(
-    id,
-    code,
-  );
+  try {
+    const result = await mermaid.render(
+      id,
+      code.trim(),
+    );
 
-  return result.svg;
+    return result.svg;
+  } catch (error) {
+    console.error(
+      "Mermaid diagram parsing/rendering failed:",
+      error,
+    );
+
+    throw error;
+  }
 }
 
 function getHeadingColor(level: number): string {
@@ -1844,71 +1933,85 @@ const drawCodeBlock = async (
   /*                         MERMAID DIAGRAM RENDERING                       */
   /* ---------------------------------------------------------------------- */
 
-  if (language === "mermaid") {
-    try {
-      const svg = await renderMermaidSvg(code);
+ if (language === "mermaid") {
+  try {
+    const svg = await renderMermaidSvg(code);
 
-      // Convert SVG into PNG for PowerPoint compatibility.
-      const imageData = await svgToPng(svg);
+    const imageData = await svgToPng(svg);
 
-      const image = new Image();
+    const image = new Image();
 
-      await new Promise<void>((resolve, reject) => {
-        image.onload = () => resolve();
+    await new Promise<void>((resolve, reject) => {
+      image.onload = () => resolve();
 
-        image.onerror = () => {
-          reject(
-            new Error("Unable to load Mermaid diagram image."),
-          );
-        };
+      image.onerror = () => {
+        reject(
+          new Error("Unable to load Mermaid diagram image."),
+        );
+      };
 
-        image.src = imageData;
-      });
+      image.src = imageData;
+    });
 
-      const dimensions = getImageDimensions(
-        image.naturalWidth,
-        image.naturalHeight,
-        CONTENT_W,
-        4.8,
-      );
+    const originalWidth = image.naturalWidth;
+    const originalHeight = image.naturalHeight;
 
-      if (
-        currentY + dimensions.height + GAP >
-        CONTENT_BOTTOM
-      ) {
-        nextSlide("Diagram");
-      }
-
-      const target = ensureSlide();
-
-      target.addImage({
-        data: imageData,
-
-        x:
-          MARGIN_X +
-          (CONTENT_W - dimensions.width) / 2,
-
-        y: currentY,
-
-        w: dimensions.width,
-        h: dimensions.height,
-
-        altText: "Mermaid diagram",
-      });
-
-      currentY += dimensions.height + GAP;
-
-      return;
-    } catch (error) {
-      console.error(
-        "Mermaid rendering failed:",
-        error,
-      );
-
-      // Continue below and display the Mermaid source
-      // if diagram rendering fails.
+    if (!originalWidth || !originalHeight) {
+      throw new Error("Invalid Mermaid image dimensions.");
     }
+
+    // Calculate proportional dimensions.
+    // Never independently stretch width and height.
+    const aspectRatio = originalWidth / originalHeight;
+
+    const maxWidth = CONTENT_W;
+    const maxHeight = 4.8;
+
+    const scale = Math.min(
+  maxWidth / originalWidth,
+  maxHeight / originalHeight,
+  1,
+);
+
+    const diagramWidth = originalWidth * scale;
+    const diagramHeight = originalHeight * scale;
+
+    if (
+      currentY + diagramHeight + GAP >
+      CONTENT_BOTTOM
+    ) {
+      nextSlide("Diagram");
+    }
+
+    const target = ensureSlide();
+
+    target.addImage({
+      data: imageData,
+
+      x:
+        MARGIN_X +
+        (CONTENT_W - diagramWidth) / 2,
+
+      y: currentY,
+
+      w: diagramWidth,
+      h: diagramHeight,
+
+      altText: "Mermaid diagram",
+    });
+
+    currentY += diagramHeight + GAP;
+
+    return;
+  } catch (error) {
+    console.error(
+      "Mermaid rendering failed:",
+      error,
+    );
+
+    // Fall back to normal code rendering.
   }
+}
 
   /* ---------------------------------------------------------------------- */
   /*                          NORMAL CODE BLOCKS                             */
