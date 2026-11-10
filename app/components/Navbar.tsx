@@ -27,7 +27,7 @@ export default function Navbar() {
             width={280}
             height={56}
             alt="eSparks Document Conversion"
-            className="h-7 w-70 object-contain"
+            className="h-7 w-auto object-contain"
           />
         </Link>
 

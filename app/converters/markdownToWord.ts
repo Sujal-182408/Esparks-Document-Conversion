@@ -89,9 +89,9 @@ function imageRunFromDataUri(src: string, alt: string): ImageRun | null {
   });
 }
 
-function inlineRuns(
+async function inlineRuns(
   tokens: InlineToken[]
-): (TextRun | ExternalHyperlink | ImageRun)[] {
+): Promise<(TextRun | ExternalHyperlink | ImageRun)[]> {
   const runs: (TextRun | ExternalHyperlink | ImageRun)[] = [];
 
   for (const token of tokens) {
@@ -156,17 +156,85 @@ function inlineRuns(
         );
         break;
 
-      case "image":
-        {
-          const imageRun = imageRunFromDataUri(token.href, token.text);
-          if (!imageRun) {
-            throw new Error(
-              "Word conversion requires images to be embedded as PNG, JPEG, GIF, or BMP data URIs."
-            );
+      case "image": {
+        try {
+          let imageData = token.href;
+
+          // Convert external images and unsupported formats to PNG.
+          if (!imageData.startsWith("data:image/png")) {
+            let image: HTMLImageElement;
+
+            if (imageData.startsWith("data:image/")) {
+              image = new Image();
+              await new Promise<void>((resolve, reject) => {
+                image.onload = () => resolve();
+                image.onerror = () => reject(
+                  new Error("Unable to load embedded image.")
+                );
+                image.src = imageData;
+              });
+            } else {
+              const response = await fetch(imageData);
+
+              if (!response.ok) {
+                throw new Error(
+                  `Failed to load image: ${response.status}`
+                );
+              }
+
+              const blob = await response.blob();
+              const objectUrl = URL.createObjectURL(blob);
+
+              image = new Image();
+
+              try {
+                await new Promise<void>((resolve, reject) => {
+                  image.onload = () => resolve();
+                  image.onerror = () => reject(
+                    new Error("Unable to load image.")
+                  );
+                  image.src = objectUrl;
+                });
+              } finally {
+                URL.revokeObjectURL(objectUrl);
+              }
+            }
+
+            const canvas = document.createElement("canvas");
+            canvas.width = image.naturalWidth;
+            canvas.height = image.naturalHeight;
+
+            const ctx = canvas.getContext("2d");
+
+            if (!ctx) {
+              throw new Error("Unable to create image canvas.");
+            }
+
+            ctx.drawImage(image, 0, 0);
+            imageData = canvas.toDataURL("image/png");
           }
+
+          const imageRun = imageRunFromDataUri(
+            imageData,
+            token.text
+          );
+
+          if (!imageRun) {
+            throw new Error("Unable to create Word image.");
+          }
+
           runs.push(imageRun);
+        } catch (error) {
+          console.error("Word image conversion failed:", {
+            image: token.href,
+            error,
+          });
+
+          throw error;
         }
+
         break;
+      }
     }
   }
 
@@ -181,7 +249,7 @@ function getInlineTokens(token: Token): InlineToken[] {
   return [];
 }
 
-function makeParagraph(
+async function makeParagraph(
   token: Token,
   options: {
     heading?: (typeof HeadingLevel)[keyof typeof HeadingLevel];
@@ -191,8 +259,8 @@ function makeParagraph(
     quote?: boolean;
   } = {},
   fontSize = 14
-): Paragraph {
-  const runs = inlineRuns(getInlineTokens(token));
+): Promise<Paragraph> {
+  const runs = await inlineRuns(getInlineTokens(token));
 
   return new Paragraph({
     children: runs.length ? runs : [new TextRun("")],
@@ -207,12 +275,12 @@ function makeParagraph(
   });
 }
 
-function convertTokens(
+async function convertTokens(
   tokens: Token[],
   quote = false,
   listLevel = 0,
   fontSize = 14
-): (Paragraph | Table)[] {
+): Promise<(Paragraph | Table)[]> {
   const output: (Paragraph | Table)[] = [];
 
   for (const token of tokens) {
@@ -228,7 +296,7 @@ function convertTokens(
         ];
 
         output.push(
-          makeParagraph(token, {
+          await makeParagraph(token, {
             heading: headingLevels[Math.min(token.depth - 1, 5)],
           }, fontSize)
         );
@@ -236,17 +304,17 @@ function convertTokens(
       }
 
       case "paragraph":
-        output.push(makeParagraph(token, { quote }, fontSize));
+        output.push(await makeParagraph(token, { quote }, fontSize));
         break;
 
       case "text":
         if (token.tokens) {
-          output.push(makeParagraph(token, { quote }, fontSize));
+          output.push(await makeParagraph(token, { quote }, fontSize));
         }
         break;
 
       case "blockquote":
-        output.push(...convertTokens(token.tokens ?? [], true, 0, fontSize));
+        output.push(...await convertTokens(token.tokens ?? [], true, 0, fontSize));
         break;
 
       case "list":
@@ -258,7 +326,7 @@ function convertTokens(
           } as Token;
 
           output.push(
-            makeParagraph(itemToken, {
+            await makeParagraph(itemToken, {
               bullet: !token.ordered,
               numbered: token.ordered,
               listLevel,
@@ -267,7 +335,7 @@ function convertTokens(
 
           for (const child of item.tokens) {
             if (child.type === "list") {
-              output.push(...convertTokens([child], quote, listLevel + 1, fontSize));
+              output.push(...await convertTokens([child], quote, listLevel + 1, fontSize));
             }
           }
         }
@@ -322,16 +390,16 @@ function convertTokens(
           ...tableToken.rows,
         ];
 
-        const tableRows: TableRow[] = rows.map((row, rowIndex) => {
+        const tableRows: TableRow[] = await Promise.all(rows.map(async (row, rowIndex) => {
           return new TableRow({
-            children: row.map((cell) => {
+            children: await Promise.all(row.map(async (cell) => {
               return new TableCell({
                 children: [
                   new Paragraph({
                     children:
                       rowIndex === 0
                         ? [new TextRun({ text: cell.text, bold: true })]
-                        : inlineRuns(cell.tokens as InlineToken[]),
+                        : await inlineRuns(cell.tokens as InlineToken[]),
                   }),
                 ],
                 width: {
@@ -339,9 +407,9 @@ function convertTokens(
                   type: WidthType.PERCENTAGE,
                 },
               });
-            }),
+            })),
           });
-        });
+        }));
 
         output.push(
           new Table({
@@ -374,7 +442,7 @@ function convertTokens(
   return output;
 }
 
-export async function convertMarkdownToWord(
+ export async function convertMarkdownToWord(
   markdown: string,
   fontSize = 14
 ): Promise<Blob> {
@@ -474,7 +542,7 @@ export async function convertMarkdownToWord(
               },
             },
           },
-          children: convertTokens(tokens, false, 0, fontSize),
+          children: await convertTokens(tokens, false, 0, fontSize),
         },
       ],
     });

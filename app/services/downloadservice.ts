@@ -19,15 +19,24 @@ export function downloadTextFile(
   window.setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+function sanitizeFilename(originalName: string): string {
+  return originalName
+    .replace(/\.[^.]+$/, "")
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_")
+    .trim()
+    .replace(/[. ]+$/, "");
+}
+
 export function markdownFilename(originalName: string): string {
   const base = originalName
-    .replace(/\.docx$/i, "")
+    .replace(/\.(docx?)$/i, "")
     .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_")
     .trim()
     .replace(/[. ]+$/, "");
 
- return `${base || "converted-document"}.md`;
+  return `${base || "converted-document"}.md`;
 }
+
 export function pdfMarkdownFilename(originalName: string): string {
   const base = originalName
     .replace(/\.pdf$/i, "")
@@ -37,11 +46,12 @@ export function pdfMarkdownFilename(originalName: string): string {
 
   return `${base || "converted-document"}.md`;
 }
+
 export function powerpointMarkdownFilename(
   originalName: string
 ): string {
   const base = originalName
-    .replace(/\.pptx$/i, "")
+    .replace(/\.pptx?$/i, "")
     .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_")
     .trim()
     .replace(/[. ]+$/, "");
@@ -53,6 +63,10 @@ export async function downloadWordFile(
   blob: Blob,
   originalName: string
 ): Promise<void> {
+  if (!(blob instanceof Blob)) {
+    throw new Error("Invalid Word document Blob.");
+  }
+
   const base = originalName
     .replace(/\.(md|markdown|txt)$/i, "")
     .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_")
@@ -64,9 +78,11 @@ export async function downloadWordFile(
 
   try {
     const link = document.createElement("a");
+
     link.href = url;
     link.download = filename;
     link.style.display = "none";
+
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -80,6 +96,24 @@ export function downloadConvertedFile(
   originalName: string,
   extension: ".pdf" | ".pptx"
 ): void {
+  // Validate the generated file
+  if (!(blob instanceof Blob)) {
+    console.error("Invalid download value:", {
+      blob,
+      type: typeof blob,
+      constructor: (blob as unknown as { constructor?: { name?: string } })
+        ?.constructor?.name,
+    });
+    
+    throw new Error(
+      "Download failed: The generated file is not a valid Blob."
+    );
+  }
+
+  if (blob.size === 0) {
+    throw new Error("Download failed: The generated file is empty.");
+  }
+
   const base = originalName
     .replace(/\.[^.]+$/, "")
     .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_")
@@ -87,17 +121,29 @@ export function downloadConvertedFile(
     .replace(/[. ]+$/, "");
 
   const filename = `${base || "converted-document"}${extension}`;
-  const url = URL.createObjectURL(blob);
+
+  let url: string;
+
+  try {
+    url = URL.createObjectURL(blob);
+  } catch (error) {
+    console.error("Blob URL creation failed:", error);
+    throw new Error("Unable to create a download URL.");
+  }
 
   try {
     const link = document.createElement("a");
+
     link.href = url;
     link.download = filename;
     link.style.display = "none";
+
     document.body.appendChild(link);
     link.click();
     link.remove();
   } finally {
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    window.setTimeout(() => {
+      URL.revokeObjectURL(url);
+    }, 1000);
   }
 }
