@@ -1402,7 +1402,6 @@ async function renderMermaidSvg(
       // Pie chart configuration.
       pie: {
         useWidth: 450,
-        useHeight: 350,
       },
     });
 
