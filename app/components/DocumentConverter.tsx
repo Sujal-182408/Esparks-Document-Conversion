@@ -522,6 +522,46 @@ export default function DocumentConverter({
 }
 
 /**
+ * Displays the actual generated PDF Blob, not a separately rendered Markdown
+ * approximation. The object URL is revoked whenever the Blob changes/unmounts.
+ */
+function PdfBlobPreview({
+  blob,
+  title = "Generated PDF preview",
+  className = "h-full w-full",
+}: {
+  blob: Blob;
+  title?: string;
+  className?: string;
+}) {
+  const [pdfUrl, setPdfUrl] = useState("");
+
+  useEffect(() => {
+    const url = URL.createObjectURL(blob);
+    setPdfUrl(url);
+
+    return () => URL.revokeObjectURL(url);
+  }, [blob]);
+
+  if (!pdfUrl) {
+    return (
+      <div className="flex min-h-64 items-center justify-center text-sm text-slate-400">
+        Preparing PDF preview…
+      </div>
+    );
+  }
+
+  return (
+    <iframe
+      title={title}
+      src={`${pdfUrl}#toolbar=1&navpanes=0&view=FitH`}
+      className={className}
+      style={{ minHeight: 320, border: 0, background: "#fff" }}
+    />
+  );
+}
+
+/**
  * Converter content.
  */
 function DocumentConverterContent({
@@ -1578,6 +1618,19 @@ downloadConvertedFile(
                           <div className="mb-5 h-1.5 rounded-full bg-slate-500" />
                           {renderMarkdown(previewMarkdown)}
                         </div>
+                      ) : outputFormat === "pdf" ? (
+                        generatedFile?.format === "pdf" ? (
+                          <div className="mx-auto h-[38rem] w-full max-w-4xl overflow-hidden rounded-lg border border-slate-300 bg-white shadow-xl">
+                            <PdfBlobPreview
+                              blob={generatedFile.blob}
+                              className="h-full w-full"
+                            />
+                          </div>
+                        ) : (
+                          <div className="mx-auto min-h-64 max-w-3xl overflow-auto rounded-lg border border-slate-200 bg-white px-6 py-8 shadow-xl sm:px-10 sm:py-12">
+                            {renderMarkdown(previewMarkdown)}
+                          </div>
+                        )
                       ) : (
                         <div className="mx-auto min-h-64 max-w-3xl overflow-auto rounded-lg border border-slate-200 bg-white px-6 py-8 shadow-xl sm:px-10 sm:py-12">
                           {renderMarkdown(previewMarkdown)}
@@ -1821,6 +1874,17 @@ downloadConvertedFile(
                   ) : (
                     renderMarkdown(result)
                   )
+                ) : outputFormat === "pdf" && generatedFile?.format === "pdf" ? (
+                  <div className="h-full min-h-[70vh] w-full overflow-hidden rounded-lg bg-white">
+                    <PdfBlobPreview
+                      blob={generatedFile.blob}
+                      className="h-[70vh] w-full sm:h-[78vh]"
+                    />
+                  </div>
+                ) : outputFormat === "pdf" ? (
+                  <div className="flex min-h-[50vh] items-center justify-center text-center text-sm text-slate-500">
+                    Generate the PDF to view the actual document.
+                  </div>
                 ) : (
                   renderMarkdown(result)
                 )}

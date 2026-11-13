@@ -309,9 +309,8 @@ function inlineRuns(
       }
 
       case "image":
-        add(
-          (token as Tokens.Image).text || "[Image]",
-        );
+        // Images are placed as slide images by the block renderer. Do not
+        // replace them with alt text in the PowerPoint body text.
         break;
 
       case "br":
@@ -1206,12 +1205,15 @@ function getFontSize(
   baseSize: number,
 ): number {
   const sizes: Record<number, number> = {
-    1: FONT_SIZE.h1,
-    2: FONT_SIZE.h2,
-    3: FONT_SIZE.h3,
-    4: FONT_SIZE.h4,
-    5: FONT_SIZE.h5,
-    6: FONT_SIZE.h6,
+    // Keep heading proportions in sync with the Markdown preview and PDF
+    // renderer. Those renderers scale heading sizes with the selected body
+    // font size instead of keeping headings fixed at their default values.
+    1: baseSize * (30 / 14),
+    2: baseSize * (24 / 14),
+    3: baseSize * (20 / 14),
+    4: baseSize * (17 / 14),
+    5: baseSize * (17 / 14),
+    6: baseSize * (17 / 14),
   };
 
   return sizes[level] ?? baseSize;
@@ -2244,9 +2246,13 @@ const drawCodeBlock = async (
   ) {
     const item = token.items[index];
 
-    const prefix = token.ordered
-      ? `${Number(token.start ?? 1) + index}.`
-      : getBulletCharacter(false);
+    const prefix = item.task
+      ? item.checked
+        ? "☑"
+        : "☐"
+      : token.ordered
+        ? `${Number(token.start ?? 1) + index}.`
+        : getBulletCharacter(false);
 
     const itemTokens = item.tokens as Token[];
 
@@ -2301,13 +2307,15 @@ const drawCodeBlock = async (
       x: MARGIN_X + indent,
       y: itemY,
       w: 0.3,
-      h: Math.max(estimatedHeight, 0.25),
+      // Match drawRuns' first-line text box so the checkbox stays beside
+      // the first line, even when the list item wraps onto more lines.
+      h: (baseFontSize / 72) * LINE_HEIGHT + 0.025,
       fontFace: FONT,
       fontSize: baseFontSize,
       bold: true,
       color: COLORS.primary,
       margin: 0,
-      valign: "top",
+      valign: "middle",
       fit: "none",
       wrap: false,
     });
@@ -2620,6 +2628,35 @@ const drawCodeBlock = async (
     }
   };
 
+  const drawParagraphWithImages = async (
+    token: Tokens.Paragraph,
+  ): Promise<void> => {
+    const inlineTokens = token.tokens as Token[];
+    let textTokens: Token[] = [];
+
+    const flushText = () => {
+      if (!textTokens.length) return;
+
+      drawParagraph({
+        ...token,
+        tokens: textTokens,
+        text: getPlainText(textTokens),
+      });
+      textTokens = [];
+    };
+
+    for (const inlineToken of inlineTokens) {
+      if (inlineToken.type === "image") {
+        flushText();
+        await drawImage(inlineToken as Tokens.Image);
+      } else {
+        textTokens.push(inlineToken);
+      }
+    }
+
+    flushText();
+  };
+
   /* ------------------------------------------------------------------------ */
   /*                             HTML BLOCKS                                  */
   /* ------------------------------------------------------------------------ */
@@ -2749,7 +2786,7 @@ const drawTextBlock = (
         break;
 
       case "paragraph":
-        drawParagraph(token as Tokens.Paragraph);
+        await drawParagraphWithImages(token as Tokens.Paragraph);
         break;
 
       case "text":
